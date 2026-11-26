@@ -1331,8 +1331,18 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
         || secureChannelRef.current !== requestChannel) {
         return;
       }
-      if (publishedConversation && executionAtRead !== executionVersionRef.current) return;
       if (historyFailed) setStatusText('历史加载失败，当前显示实时内容，请重试。');
+      if (!cursor && executionAtRead !== executionVersionRef.current) {
+        // The live read may have finished before a delayed/failed history read.
+        // Fill missing history without replacing newer streamed content or state.
+        if (!publishedConversation) setTimeline(current => prependHistoryPage(items, current));
+        rememberQuestionReplies(page.questionReplies);
+        rememberQuestionReplies(snapshot?.questionReplies);
+        setNextCursor(page.nextCursor || null);
+        setInitialHistoryLoaded(true);
+        finishInitialBootstrap();
+        return;
+      }
       if (cursor) {
         if (messageListRef.current && !viewport.following) viewport.capture(messageListRef.current);
         setTimeline((current) => prependHistoryPage(items, current));

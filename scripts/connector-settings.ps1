@@ -48,14 +48,22 @@ if($Background){
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
-    $child = [Diagnostics.Process]::Start($info)
-    Remove-Item Env:BRIDGE_DEVICE_PRIVATE_KEY -ErrorAction SilentlyContinue
-    $output = $child.StandardOutput.ReadToEndAsync()
-    $errors = $child.StandardError.ReadToEndAsync()
-    $child.WaitForExit()
-    [IO.File]::WriteAllText((Join-Path $stateRoot 'connector-runtime.log'),$output.Result+$errors.Result,[Text.UTF8Encoding]::new($false))
-    $code = $child.ExitCode
-    $child.Dispose()
+    $outputLog = [IO.FileStream]::new((Join-Path $stateRoot 'connector-runtime.log'),'Create','Write','ReadWrite',1)
+    $errorLog = [IO.FileStream]::new((Join-Path $stateRoot 'connector-errors.log'),'Create','Write','ReadWrite',1)
+    try {
+        $child = [Diagnostics.Process]::Start($info)
+        Remove-Item Env:BRIDGE_DEVICE_PRIVATE_KEY -ErrorAction SilentlyContinue
+        $output = $child.StandardOutput.BaseStream.CopyToAsync($outputLog)
+        $errors = $child.StandardError.BaseStream.CopyToAsync($errorLog)
+        $child.WaitForExit()
+        $output.GetAwaiter().GetResult()
+        $errors.GetAwaiter().GetResult()
+        $code = $child.ExitCode
+        $child.Dispose()
+    } finally {
+        $outputLog.Dispose()
+        $errorLog.Dispose()
+    }
     exit $code
 }
 if($Bind){
