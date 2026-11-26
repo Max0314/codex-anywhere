@@ -867,7 +867,7 @@ export class OwnerAccess {
     response.end(
       page(
         "下载客户端",
-        '<h1>Windows 客户端</h1><p>Windows 11 · x64</p><p>内置运行环境。安装后连接 Fribench，并在每台电脑选择项目目录。</p><p>请使用已登录 Codex Desktop 的 Windows 用户安装。远程执行时电脑需保持开机、登录和联网。</p><a href="/_fribench/auth/login?return_to=%2Fdownload">登录 Fribench</a><button id="download">下载 Windows 客户端</button><p id="status"></p><p><a href="/">返回会话</a></p><script src="/owner-download.js"></script>',
+        '<a class="back-link" href="/">← 返回会话</a><div class="app-mark" aria-hidden="true">&gt;_</div><p class="eyebrow">CODEX ANYWHERE</p><h1>在手机上继续 Codex 会话</h1><p class="intro">安装 Fribench Codex Connector，从手机继续电脑上的 Codex 会话。</p><div class="download-card"><div><h2>Windows 客户端</h2><p>Windows 11 · x64 · 通用安装包</p></div><button id="download">下载安装包 ↓</button><p id="status" role="status"></p></div><section class="requirements"><h2>开始之前</h2><p>在已安装并登录 Codex Desktop 的 Windows 用户下安装。安装包内置运行环境，无需另外安装 Node.js 或 Git。</p><p>安装后连接 Fribench，选择允许访问的项目目录。每台电脑安装相同的客户端，在手机侧栏切换电脑。</p><p>远程使用时，电脑需保持开机、登录和联网。</p></section><p class="account-link"><a href="/_fribench/auth/login?return_to=%2Fdownload">登录 Fribench</a> 后可下载和管理设备</p><script src="/owner-download.js"></script>',
       ),
     );
   }

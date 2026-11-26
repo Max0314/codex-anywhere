@@ -38,9 +38,25 @@ if (-not (Test-Path -LiteralPath $node)) { $node = (Get-Command node.exe).Source
 $codex = Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA 'OpenAI/Codex/bin') -Filter codex.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 if($codex){$env:CODEX_BIN=$codex.FullName}
 if($Background){
-    Set-Location -LiteralPath $appRoot
-    & $node (Join-Path $appRoot 'build/connector/index.js') *> (Join-Path $stateRoot 'connector-runtime.log')
-    exit $LASTEXITCODE
+    # WinPS 5.1 can turn native stderr into terminating ErrorRecords under Stop.
+    # Keep the child independent of PowerShell's native-command redirection.
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $node
+    $info.Arguments = '"'+(Join-Path $appRoot 'build/connector/index.js')+'"'
+    $info.WorkingDirectory = $appRoot
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $child = [Diagnostics.Process]::Start($info)
+    Remove-Item Env:BRIDGE_DEVICE_PRIVATE_KEY -ErrorAction SilentlyContinue
+    $output = $child.StandardOutput.ReadToEndAsync()
+    $errors = $child.StandardError.ReadToEndAsync()
+    $child.WaitForExit()
+    [IO.File]::WriteAllText((Join-Path $stateRoot 'connector-runtime.log'),$output.Result+$errors.Result,[Text.UTF8Encoding]::new($false))
+    $code = $child.ExitCode
+    $child.Dispose()
+    exit $code
 }
 if($Bind){
     & $node (Join-Path $appRoot 'build/connector/owner-bind.js')

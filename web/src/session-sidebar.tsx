@@ -69,7 +69,6 @@ export const SessionSidebar = memo(function SessionSidebar({
 
   return (
     <aside className={`sidebar ${open ? 'open' : ''}`} aria-label={t('会话列表', 'Session list')}>
-      {typeof window !== 'undefined' && window.__CODEX_ANYWHERE_CONFIG__?.owner && <div id="owner-tools-slot" />}
       <div className="sidebar-head">
         <div><p className="eyebrow">CODEX ANYWHERE</p></div>
         <div className="sidebar-actions">
@@ -145,6 +144,7 @@ export const SessionSidebar = memo(function SessionSidebar({
         })}
         {!visibleSessions.length && <p className="empty-list">{t('没有匹配的会话', 'No matching sessions')}</p>}
       </nav>
+      {typeof window !== 'undefined' && window.__CODEX_ANYWHERE_CONFIG__?.owner && <div id="owner-tools-slot" />}
     </aside>
   );
 });

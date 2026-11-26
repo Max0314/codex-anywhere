@@ -3,8 +3,8 @@ param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [Parameter(Mandatory)][string]$ReleasePublicKey,
     [Parameter(Mandatory)][string]$MakeNsis,
-    [string]$Version='0.5.0-fribench.1',
-    [int]$ReleaseSequence=1
+    [string]$Version='0.5.0-fribench.2',
+    [int]$ReleaseSequence=2
 )
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
