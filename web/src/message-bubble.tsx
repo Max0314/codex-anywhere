@@ -36,6 +36,7 @@ export type MessageBubbleProps = {
   active?: boolean;
   imageSource?: string;
   onDownloadFile: (path: string) => void;
+  onSaveImage?: (path: string) => void;
   onReadTextFile?: (path: string) => Promise<TextPreviewDocument>;
   onReadTurnDiff?: (turnId: string) => Promise<TurnDiffDocument>;
   onReadVisualization: (path: string) => Promise<string>;
@@ -349,6 +350,7 @@ function MessageBubbleComponent({
   active = false,
   imageSource,
   onDownloadFile,
+  onSaveImage,
   onReadTextFile,
   onReadTurnDiff,
   onReadVisualization,
@@ -586,6 +588,9 @@ function MessageBubbleComponent({
             )}
             <figcaption>
               <span>{item.attachment.name}</span>
+              {onSaveImage && (
+                <button type="button" onClick={() => onSaveImage(item.attachment!.path)}>{t('保存图片', 'Save image')}</button>
+              )}
               {(item.attachment.source === 'generated' || item.attachment.source === 'local') && (
                 <button type="button" onClick={() => onDownloadFile(item.attachment!.path)}>
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m-4-4 4 4 4-4M5 19h14" /></svg>
@@ -622,6 +627,12 @@ function MessageBubbleComponent({
             aria-label={t('图片预览', 'Image preview')}
             onClick={() => setImageExpanded(false)}
           >
+            {onSaveImage && (
+              <button type="button" className="image-lightbox-save" onClick={event => {
+                event.stopPropagation();
+                onSaveImage(item.attachment!.path);
+              }}>{t('保存图片', 'Save image')}</button>
+            )}
             <button
               className="image-lightbox-close"
               type="button"
@@ -664,6 +675,9 @@ function MessageBubbleComponent({
             <header>
               <span title={filePreview.path}>{filePreview.name}</span>
               <div className="markdown-lightbox-actions">
+                {onSaveImage && filePreview.kind === 'image' && <button type="button" onClick={() => onSaveImage(filePreview.path)}>
+                  {t('保存图片', 'Save image')}
+                </button>}
                 {filePreviewHistory.length > 0 && <button type="button" onClick={() => {
                   filePreviewRequestRef.current += 1;
                   setFilePreview(filePreviewHistory.at(-1)!);
@@ -812,6 +826,7 @@ function messageBubblePropsEqual(left: MessageBubbleProps, right: MessageBubbleP
     && left.active === right.active
     && left.imageSource === right.imageSource
     && left.onDownloadFile === right.onDownloadFile
+    && left.onSaveImage === right.onSaveImage
     && left.onReadTextFile === right.onReadTextFile
     && left.onReadTurnDiff === right.onReadTurnDiff
     && left.onReadVisualization === right.onReadVisualization

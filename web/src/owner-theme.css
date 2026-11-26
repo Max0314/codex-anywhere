@@ -673,3 +673,20 @@ html[data-theme] .brand-mark { background: var(--ui-text); color: var(--ui-bg); 
   html[data-theme] .presence::before { animation: none; }
   html[data-theme] .session-running-dot { animation: none; }
 }
+
+.image-save-dialog { width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); padding: 0; overflow: auto; border: 1px solid var(--ui-border, #444); border-radius: 20px; color: var(--ui-text, #eee); background: var(--ui-surface, #212121); box-shadow: var(--ui-shadow); }
+.image-save-dialog::backdrop { background: #0009; }
+.image-save-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 20px; }
+.image-save-dialog header div { display: grid; gap: 6px; min-width: 0; }
+.image-save-dialog strong { font-size: 16px; font-weight: 600; }
+.image-save-dialog small { font-size: 12px; color: var(--ui-muted, #aaa); overflow-wrap: anywhere; }
+.image-save-dialog header button { flex: 0 0 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: var(--ui-hover, #333); color: inherit; font-size: 24px; }
+.image-save-preview { display: grid; place-items: center; padding: 0 16px; }
+.image-save-preview img { display: block; max-width: 100%; max-height: 50dvh; object-fit: contain; -webkit-touch-callout: default; user-select: auto; }
+.image-save-dialog footer { padding: 16px 20px 20px; }
+.image-save-dialog p { margin: 0 0 16px; color: var(--ui-secondary, #bbb); font-size: 13px; line-height: 1.7; }
+.image-save-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.image-save-actions button, .image-save-actions a { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 10px 16px; border: 1px solid var(--ui-border, #444); border-radius: 12px; color: inherit; background: transparent; font-size: 14px; text-decoration: none; }
+.image-save-actions .image-save-primary { background: var(--ui-text, #eee); color: var(--ui-bg, #212121); border-color: transparent; }
+.image-save-actions button:disabled { opacity: .6; }
+.image-lightbox-save { position: absolute; top: max(20px, env(safe-area-inset-top)); left: 20px; min-height: 44px; padding: 10px 16px; border: 1px solid #fff5; border-radius: 12px; color: #fff; background: #202020cc; font-size: 14px; }

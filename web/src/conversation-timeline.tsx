@@ -47,6 +47,7 @@ type ConversationTimelineProps = {
   onScroll: UIEventHandler<HTMLDivElement>;
   onLoadOlder: () => void;
   onDownloadFile: (path: string) => void;
+  onSaveImage?: (path: string) => void;
   onReadTextFile: (path: string) => Promise<TextPreviewDocument>;
   onReadTurnDiff: (turnId: string) => Promise<TurnDiffDocument>;
   onReadVisualization: (path: string) => Promise<string>;
@@ -78,6 +79,7 @@ export const ConversationTimeline = memo(function ConversationTimeline({
   onScroll,
   onLoadOlder,
   onDownloadFile,
+  onSaveImage,
   onReadTextFile,
   onReadTurnDiff,
   onReadVisualization,
@@ -176,6 +178,7 @@ export const ConversationTimeline = memo(function ConversationTimeline({
               imageSource={attachment ? attachmentUrls[attachment.path] : undefined}
               onRetryImage={onRetryImages}
               onDownloadFile={onDownloadFile}
+              onSaveImage={onSaveImage}
               onReadTextFile={onReadTextFile}
               onReadTurnDiff={onReadTurnDiff}
               onReadVisualization={onReadVisualization}

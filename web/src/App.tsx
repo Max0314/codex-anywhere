@@ -41,6 +41,7 @@ import {
 import { buildFileMessage, uploadFile } from './file-upload';
 import { useAttachmentDraft } from './attachment-draft';
 import { useFileTransfer } from './file-transfer';
+import { ImageSaveDialog } from './image-save-dialog';
 import { useFilePreviews } from './file-preview-client';
 import { restoreOwnedTurn } from './owned-turn';
 import { t } from './i18n';
@@ -550,7 +551,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     options: RequestOptions = {},
   ): Promise<T> => requestManagerRef.current!.request<T>(action, window.__CODEX_ANYWHERE_CONFIG__?.owner && /^(turn.start|turn.steer)$/.test(action) ? { ...payload, intent: action === 'turn.start' ? 'start' : 'steer' } : payload, options), []);
 
-  const { fileDownload, downloadLocalFile, cancelFileDownload } = useFileTransfer({
+  const { fileDownload, downloadLocalFile, cancelFileDownload, imageToSave, saveLocalImage, closeImageSave } = useFileTransfer({
     online, request, reportTimelineError, environmentIdRef, selectedRequestRef, connectorOnlineRef, secureChannelRef,
   });
   const { readVisualization, readTextFile, readTurnDiff, readPreviewImage } = useFilePreviews(request, threadId);
@@ -2632,6 +2633,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
           onScroll={handleMessageScroll}
           onLoadOlder={loadOlder}
           onDownloadFile={downloadLocalFile}
+          onSaveImage={saveLocalImage}
           onReadTextFile={readTextFile}
           onReadTurnDiff={readTurnDiff}
           onReadVisualization={readVisualization}
@@ -2658,6 +2660,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
             />
           )}
           <DownloadIndicator download={fileDownload} onCancel={cancelFileDownload} />
+          {imageToSave && <ImageSaveDialog file={imageToSave} onClose={closeImageSave} />}
         </div>
 
         {lastArchived?.environment === environmentId && (

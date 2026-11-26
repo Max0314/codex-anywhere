@@ -20,6 +20,7 @@ export function followLabel(state: FollowState) {
 }
 
 export function friendlyError(error: unknown) {
+  if (error instanceof Error && error.message === 'image_save_format_not_supported') return t('此图片格式暂不支持保存到相册，请使用「下载原图」。', 'This image format cannot be saved to Photos here. Use Download original.');
   const deletionErrors: Record<string, string> = {
     session_delete_turn_active: t('该会话仍在运行，请先停止任务或等待完成后再删除。', 'Stop this session or wait for it to finish before deleting it.'),
     session_delete_in_progress: t('该会话正在删除，请稍候。', 'This session is being deleted. Please wait.'),
