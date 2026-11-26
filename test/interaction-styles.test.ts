@@ -4,7 +4,7 @@ import test from 'node:test';
 import { compile } from 'sass';
 import { isHoverPointer } from '../web/src/pointer-interaction.js';
 
-const css = compile('web/src/styles.scss').css;
+const css = compile('web/src/styles.scss').css.replace(/var\(--c-[a-f0-9]+,\s*(#[a-f0-9]+)\)/g, '$1');
 
 test('every control inherits transparent tap feedback with keyboard focus preserved', () => {
   assert.match(css, /:root\s*\{\s*-webkit-tap-highlight-color: transparent;/);

@@ -169,6 +169,11 @@ export function isMermaidCodeClass(className: unknown) {
     && className.split(/\s+/).some((value) => value.toLowerCase() === 'language-mermaid');
 }
 
+function currentMermaidTheme() {
+  if (typeof document === 'undefined' || document.documentElement.dataset.theme !== 'light') return mermaidThemeVariables;
+  return { ...mermaidThemeVariables, darkMode: false, background: '#fafafa', primaryColor: '#e6eef9', primaryTextColor: '#222222', secondaryColor: '#e4f1e9', secondaryTextColor: '#222222', tertiaryColor: '#f0f1f4', tertiaryTextColor: '#222222', textColor: '#222222', mainBkg: '#e6eef9', clusterBkg: '#f3f4f6', edgeLabelBackground: '#fafafa', nodeTextColor: '#222222', noteBkgColor: '#fff4d8', noteTextColor: '#222222', actorBkg: '#e6eef9', actorTextColor: '#222222', signalTextColor: '#222222', labelTextColor: '#222222', loopTextColor: '#222222' };
+}
+
 function loadMermaid() {
   if (!mermaidLoad) {
     mermaidLoad = Promise.all([import('mermaid'), import('dompurify')]).then(([
@@ -197,6 +202,8 @@ function loadMermaid() {
 }
 
 export function MermaidDiagram({ source }: { source: string }) {
+  const [scheme, setScheme] = useState(() => typeof document === 'undefined' ? '' : document.documentElement.dataset.theme || '');
+  useEffect(() => { const observer = new MutationObserver(() => setScheme(document.documentElement.dataset.theme || '')); observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] }); return () => observer.disconnect(); }, []);
   const [preview, setPreview] = useState<MermaidPreviewState>({ status: 'loading', svg: '' });
   const isSequenceDiagram = /^\s*sequenceDiagram\b/im.test(source);
 
@@ -207,6 +214,7 @@ export function MermaidDiagram({ source }: { source: string }) {
 
     void loadMermaid()
       .then(async ({ mermaid, purifier }) => {
+        mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: currentMermaidTheme(), suppressErrorRendering: true, flowchart: { htmlLabels: false } });
         const { svg } = await mermaid.render(diagramId, source);
         const sanitizedSvg = purifier.sanitize(svg, {
           ADD_TAGS: ['foreignobject'],
@@ -227,7 +235,7 @@ export function MermaidDiagram({ source }: { source: string }) {
     return () => {
       active = false;
     };
-  }, [source]);
+  }, [source, scheme]);
 
   if (preview.status === 'ready') {
     return (

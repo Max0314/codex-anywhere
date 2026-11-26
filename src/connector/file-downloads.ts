@@ -142,6 +142,11 @@ export class DownloadManager {
   async read(payload: DownloadPayload, clientId: unknown) {
     await this.#pruneExpired();
     const session = this.#authorize(payload, clientId);
+    if (!this.allowAnyFileDownload && !await pathAllowedByRoots(session.path, this.allowedRoots)) {
+      if (session.handle) await session.handle.close();
+      this.sessions.delete(session.id);
+      throw new Error('download_path_not_allowed');
+    }
     if (session.busy) throw new Error('download_in_progress');
     session.busy = true;
     try {

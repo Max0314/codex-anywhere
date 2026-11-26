@@ -24,6 +24,9 @@ import {
 import {
   MAX_FRAME_BYTES, parseFrame, safeSend,
 } from '../shared/protocol.js';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { startOwnerControl } from './owner-control.js';
 
 const {
   token,
@@ -38,6 +41,8 @@ const {
   allowAnyFileDownload,
 } = loadConnectorConfig();
 const deviceIdentity = loadOrCreateConnectorDeviceIdentity();
+delete process.env.BRIDGE_DEVICE_PRIVATE_KEY;
+delete process.env.BRIDGE_CONNECTOR_TOKEN;
 const instanceLock = await acquireConnectorInstanceLock();
 if (!instanceLock) {
   console.log('Codex Anywhere connector is already running.');
@@ -87,16 +92,59 @@ const secureChannels = new ConnectorSecureChannels({
   identity: deviceIdentity,
   deviceId,
   send: (frame) => safeSend(socket, frame),
-  handleRequest,
+  handleRequest: async request => {
+    if (maintenance && /^(turn\.(start|steer|edit)|file\.(upload\.begin|download\.open))$/.test(request.action)) {
+      return { type: 'response', clientId: request.clientId, requestId: request.requestId, ok: false, error: 'connector_update_waiting' };
+    }
+    if (request.action === 'session.subscribe') {
+      const accepted = secureChannels.select(request.clientId || '', String(request.payload?.threadId || ''), Number(request.payload?.selectionEpoch || 0));
+      return { type: 'response', clientId: request.clientId, requestId: request.requestId, ok: true, data: { accepted } };
+    }
+    return handleRequest(request);
+  },
 });
+let policyText = '';
+secureChannels.beforeRequest = () => {
+  if (!process.env.BRIDGE_CONFIG_FILE) return;
+  const text = readFileSync(process.env.BRIDGE_CONFIG_FILE, 'utf8').replace(/^\uFEFF/, '');
+  if (text === policyText) return;
+  const config = JSON.parse(text);
+  if (!Array.isArray(config.allowedRoots) || !config.allowedRoots.every((root: unknown) => typeof root === 'string')) throw Error('invalid_directory_policy');
+  const roots = config.allowedRoots.map((root: string) => resolve(root));
+  codex.allowedRoots = roots;
+  downloads.allowedRoots = [...roots, generatedImagesDirectory(), visualizationsDirectory(), UPLOAD_DIRECTORY];
+  secureChannels.invalidateResults();
+  policyText = text;
+};
 
 let socket: WebSocket | undefined;
 let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let stopped = false;
+let connectorAuthenticated = false;
+let maintenance = false;
+let releaseRequest: { id: string; resolve: (value: unknown) => void; reject: (error: Error) => void } | null = null;
+const ownerControl = process.env.BRIDGE_OWNER_MODE === '1' ? startOwnerControl(async command => {
+  // Native Desktop tasks own a separate process and continue across observer
+  // updates. Connector-owned turns and file transfers must drain first.
+  const busy = codex.activeTurns.size > 0 || downloads.sessions.size > 0;
+  if (command === 'status') {
+    const version = process.env.BRIDGE_INSTALL_VERSION || 'source';
+    return { busy, connected: connectorAuthenticated, maintenance, version };
+  }
+  if (command === 'resume') { maintenance = false; return { maintenance }; }
+  if (command === 'prepare') { maintenance = true; if (busy) throw Error('任务正在运行，请稍后更新。'); return { ready: true }; }
+  if (command === 'stop') { if (!maintenance || busy) throw Error('任务正在运行，请稍后更新。'); setTimeout(() => void shutdown(), 100); return { stopping: true }; }
+  if (command === 'release') {
+    if (releaseRequest || socket?.readyState !== WebSocket.OPEN) throw Error('请先连接 Fribench');
+    return new Promise((resolveResult, reject) => { const id = String(Date.now()); releaseRequest = { id, resolve: resolveResult, reject }; safeSend(socket, { type: 'relay.release.grant', requestId: id }); setTimeout(() => { if (releaseRequest?.id === id) { releaseRequest = null; reject(Error('更新查询超时')); } }, 10000).unref(); });
+  }
+  throw Error('unsupported_control');
+}) : null;
 codex.on('turn-event', (message) => {
   const frame = { type: 'event', ...message };
   secureChannels.sendEvent(frame);
+  secureChannels.sendThreadEvent(frame);
 });
 // Project only operational state; raw Desktop snapshots can contain private context.
 const desktopUpdates = new Map<string, NodeJS.Timeout>();
@@ -137,10 +185,12 @@ function connect() {
     if (socket !== current || stopped) return;
     let message;
     try { message = parseFrame(data); } catch { return; }
+    const pendingRelease = releaseRequest;
+    if (message.type === 'relay.release.result' && pendingRelease && pendingRelease.id === message.requestId) { releaseRequest = null; pendingRelease.resolve(message.data); return; }
     if (message.type === 'auth.challenge') {
       try {
-        const protocol = requireCurrentProtocol(message.protocol);
-        const proof = createConnectorAuthProof(token, String(message.challenge || ''), deviceId);
+        const protocol = requireCurrentProtocol(message.protocol, process.env.BRIDGE_OWNER_MODE === '1');
+        const proof = process.env.BRIDGE_OWNER_MODE === '1' ? 'codex-anywhere-approved-device-v1' : createConnectorAuthProof(token, String(message.challenge || ''), deviceId);
         const device = createDeviceAuthProof(deviceIdentity, {
           challenge: String(message.challenge || ''),
           role: 'connector',
@@ -148,7 +198,7 @@ function connect() {
           authProof: proof,
         }, deviceLabel);
         safeSend(current, {
-          type: 'auth.connector', role: 'connector', proof, deviceId, device, protocol,
+          type: process.env.BRIDGE_OWNER_MODE === '1' ? 'auth.device' : 'auth.connector', role: 'connector', proof, deviceId, device, protocol,
         });
       } catch {
         current.close(4003, 'invalid authentication challenge');
@@ -160,6 +210,7 @@ function connect() {
       return;
     }
     if (message.type === 'auth.ok') {
+      connectorAuthenticated = true;
       reconnectAttempt = 0;
       return;
     }
@@ -169,6 +220,7 @@ function connect() {
     if (socket !== current) return;
     if (code === 4409) console.error(`Connector route rejected (${deviceId}): ${reason.toString()}. Use a unique device ID and approve its registration.`);
     socket = undefined;
+    connectorAuthenticated = false;
     scheduleReconnect();
   });
   current.on('error', () => { current.terminate(); });
@@ -187,6 +239,7 @@ function scheduleReconnect() {
 }
 
 async function shutdown() {
+  ownerControl?.close();
   stopped = true;
   if (reconnectTimer) clearTimeout(reconnectTimer);
   await browserEndpoint?.close();

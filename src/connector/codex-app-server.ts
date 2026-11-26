@@ -157,7 +157,7 @@ export class CodexAppServer extends EventEmitter {
     const configuredRoots = Array.isArray(options.allowedRoots)
       ? options.allowedRoots.map((root) => String(root).trim()).filter(Boolean).map((root) => resolve(root))
       : [];
-    this.allowedRoots = configuredRoots.length ? configuredRoots : [this.runtimeCwd];
+    this.allowedRoots = Array.isArray(options.allowedRoots) ? configuredRoots : [this.runtimeCwd];
     this.networkAccess = options.networkAccess === true;
     this.allowFullAccess = options.allowFullAccess === true;
     this.child = null;
@@ -1145,7 +1145,9 @@ export class CodexAppServer extends EventEmitter {
     const targetThreadId = String(threadId || '').trim();
     const active = targetThreadId ? this.getActiveTurn(targetThreadId) : null;
     if (clientId && active) {
-      active.clientId = clientId;
+      // Owner-mode observers receive their own subscription; legacy browsers
+      // still recover the single-recipient stream when reconnecting.
+      if (process.env.BRIDGE_OWNER_MODE !== '1') active.clientId = clientId;
     }
     return {
       activeTurn: active ? {

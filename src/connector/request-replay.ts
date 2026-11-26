@@ -4,6 +4,7 @@ type Entry<T> = { fingerprint: string; response: Promise<T> };
 
 /** In-flight mutations must survive both reconnects and completed-cache eviction. */
 export class RequestReplayCache<T> {
+  clearCompleted() { this.completed.clear(); }
   private readonly pending = new Map<string, Entry<T>>();
   private readonly completed: LRUCache<string, Entry<T>>;
   constructor(private readonly maxPending = 64, maxCompleted = 64) {

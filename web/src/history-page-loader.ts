@@ -4,16 +4,21 @@ import { attachLatestAssistantFileChanges, historyItems, mergeHistorySnapshot } 
 
 export async function loadHistoryPage(
   request: BridgeRequest, threadId: string, cursor: string | null, limit: number,
+  onConversation?: (result: { page: HistoryPage; items: ReturnType<typeof historyItems> }) => void,
 ) {
-  const [page, live] = await Promise.all([
-    request<HistoryPage>('session.turns.list', { threadId, cursor, limit, mode: 'conversation' }),
+  const results = await Promise.allSettled([
+    request<HistoryPage>('session.turns.list', { threadId, cursor, limit, mode: 'conversation' }).then(page => { onConversation?.({ page, items: attachLatestAssistantFileChanges(historyItems(page.turns, page.source), page.turnProgress) }); return page; }),
     cursor ? Promise.resolve(null) : request<HistoryPage>(
       'session.turns.list', { threadId, limit: 2, mode: 'live' }, { timeoutMs: 5_000 },
     ).catch(() => null),
   ]);
+  const historyFailed = results[0].status === 'rejected';
+  const live = results[1].status === 'fulfilled' ? results[1].value : null;
+  const page = results[0].status === 'fulfilled' ? results[0].value : live;
+  if (!page) throw results[0].status === 'rejected' ? results[0].reason : new Error('history_unavailable');
   const current = attachLatestAssistantFileChanges(historyItems(page.turns, page.source), page.turnProgress);
   const snapshot = live?.turns.length ? live : null;
-  if (!snapshot) return { page, snapshot, items: current };
+  if (!snapshot) return { page, snapshot, items: current, historyFailed };
   const latest = attachLatestAssistantFileChanges(historyItems(snapshot.turns, snapshot.source), snapshot.turnProgress);
   const turnIds = new Set(latest.map((item) => item.historyTurnId).filter((id): id is string => Boolean(id)));
   // A bounded live tail can omit the user's input or a final answer that the
@@ -41,6 +46,7 @@ export async function loadHistoryPage(
     && snapshot.turns[0]?.status === 'inProgress';
   const summaryHasNewerTurn = newest?.id !== liveId && page.turns.some((turn) => turn.id === liveId);
   return {
+    historyFailed,
     page, snapshot: summaryHasNewerTurn ? page
       : completed ? { ...snapshot, compactionStartedAt: null, turns: [{ ...snapshot.turns[0], status: newest.status }] } : snapshot,
     items: mergeHistorySnapshot(current, combined, turnIds, { partial: true }),

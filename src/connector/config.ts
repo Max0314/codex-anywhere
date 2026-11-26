@@ -21,7 +21,7 @@ export function loadConnectorConfig(
   platform = process.platform,
 ): ConnectorConfig {
   const token = String(environment.BRIDGE_CONNECTOR_TOKEN || '');
-  if (token.length < 32) {
+  if (environment.BRIDGE_OWNER_MODE !== '1' && token.length < 32) {
     throw new Error('BRIDGE_CONNECTOR_TOKEN must contain at least 32 characters');
   }
 
@@ -48,7 +48,7 @@ export function loadConnectorConfig(
     mode: configuredMode === 'desktop' || configuredMode === 'headless'
       ? configuredMode : platform === 'win32' ? 'desktop' : 'headless',
     codexBin: String(environment.CODEX_BIN || 'codex').trim() || 'codex',
-    allowedRoots: configuredAllowedRoots.length ? configuredAllowedRoots : [workingDirectory],
+    allowedRoots: environment.CODEX_ALLOWED_ROOTS_JSON !== undefined ? JSON.parse(environment.CODEX_ALLOWED_ROOTS_JSON) : configuredAllowedRoots.length ? configuredAllowedRoots : [workingDirectory],
     networkAccess: environment.CODEX_NETWORK_ACCESS === '1',
     allowFullAccess: environment.CODEX_ALLOW_FULL_ACCESS === '1',
     allowAnyFileDownload: environment.CODEX_ALLOW_ANY_FILE_DOWNLOAD === '1',

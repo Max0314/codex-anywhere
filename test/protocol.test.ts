@@ -1516,7 +1516,7 @@ test('message metadata reserves stable space before completion time arrives', ()
 });
 
 test('message metadata stays in a fixed sibling row outside the bubble', async () => {
-  const stylesSource = await readFile(resolve('web/src/styles.scss'), 'utf8');
+  const stylesSource = (await readFile(resolve('web/src/styles.scss'), 'utf8')).replace(/var\(--c-[a-f0-9]+,\s*(#[a-f0-9]+)\)/g, '$1');
   const responsiveSource = await readFile(resolve('web/src/styles/_responsive.scss'), 'utf8');
   assert.match(stylesSource, /\.message-block\s*\{[\s\S]*?width:\s*min\(96%, 920px\);[\s\S]*?display:\s*flex;/);
   assert.doesNotMatch(stylesSource, /\.message-block\s*\{[^}]*width:\s*fit-content;/);
@@ -1535,7 +1535,7 @@ test('message metadata stays in a fixed sibling row outside the bubble', async (
 });
 
 test('mobile controls suppress transient tap rectangles without hiding keyboard focus', async () => {
-  const stylesSource = await readFile(resolve('web/src/styles.scss'), 'utf8');
+  const stylesSource = (await readFile(resolve('web/src/styles.scss'), 'utf8')).replace(/var\(--c-[a-f0-9]+,\s*(#[a-f0-9]+)\)/g, '$1');
   const interactionSource = await readFile(resolve('web/src/styles/_interaction.scss'), 'utf8');
   assert.match(stylesSource, /@use '\.\/styles\/interaction';/);
   assert.match(interactionSource, /:root\s*\{\s*-webkit-tap-highlight-color:\s*transparent;/);
@@ -1546,7 +1546,7 @@ test('mobile controls suppress transient tap rectangles without hiding keyboard 
 });
 
 test('file-change action suppresses touch flash while retaining keyboard focus', async () => {
-  const stylesSource = await readFile(resolve('web/src/styles.scss'), 'utf8');
+  const stylesSource = (await readFile(resolve('web/src/styles.scss'), 'utf8')).replace(/var\(--c-[a-f0-9]+,\s*(#[a-f0-9]+)\)/g, '$1');
   assert.match(
     stylesSource,
     /\.message-change-summary\s*\{[\s\S]*?&\.interactive\s*\{[^}]*background:\s*transparent;/,
@@ -1586,7 +1586,7 @@ test('Mermaid code blocks use an on-demand diagram renderer and keep ordinary co
     onReadVisualization: async () => '',
   }));
   const rendererSource = await readFile(resolve('web/src/mermaid-diagram.tsx'), 'utf8');
-  const stylesSource = await readFile(resolve('web/src/styles.scss'), 'utf8');
+  const stylesSource = (await readFile(resolve('web/src/styles.scss'), 'utf8')).replace(/var\(--c-[a-f0-9]+,\s*(#[a-f0-9]+)\)/g, '$1');
 
   assert.match(mermaidMarkup, /class="mermaid-diagram loading"/);
   assert.doesNotMatch(mermaidMarkup, /language-mermaid/);

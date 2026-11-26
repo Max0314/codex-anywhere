@@ -69,6 +69,7 @@ export const SessionSidebar = memo(function SessionSidebar({
 
   return (
     <aside className={`sidebar ${open ? 'open' : ''}`} aria-label={t('会话列表', 'Session list')}>
+      {typeof window !== 'undefined' && window.__CODEX_ANYWHERE_CONFIG__?.owner && <div id="owner-tools-slot" />}
       <div className="sidebar-head">
         <div><p className="eyebrow">CODEX ANYWHERE</p></div>
         <div className="sidebar-actions">

@@ -4,6 +4,8 @@
 
 文档对应 **v0.4.5（2026-10-22）** · [发布与升级](docs/release-0.4.5.zh-CN.md) · [文档索引](docs/README.zh-CN.md)
 
+个人账号部署及通用 Windows 客户端见 [Owner 部署说明](docs/owner-deployment.md)。
+
 [![CI](https://github.com/gaotong132/codex-anywhere/actions/workflows/ci.yml/badge.svg)](https://github.com/gaotong132/codex-anywhere/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/gaotong132/codex-anywhere/actions/workflows/codeql.yml/badge.svg)](https://github.com/gaotong132/codex-anywhere/actions/workflows/codeql.yml)
 [![Version](https://img.shields.io/github/v/tag/gaotong132/codex-anywhere?sort=semver)](https://github.com/gaotong132/codex-anywhere/tags)

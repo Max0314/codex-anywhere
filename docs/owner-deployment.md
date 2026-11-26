@@ -1,0 +1,13 @@
+# Owner account deployment
+
+The optional owner deployment uses one server-verified account and any number of registered browsers and Windows 11 x64 connectors. The standard pairing deployment remains available when ACCESS_MODE is unset.
+
+Set ACCESS_MODE=owner, PUBLIC_ORIGIN, OWNER_SUB, IDENTITY_BASE_URL, FRIBENCH_CLIENT_SECRET and SESSION_BINDING_KEY on the relay. The identity backend implements Fribench application sessions, desktop PKCE grants and account-state verification. Keep deployment secrets in the private operations configuration. Browser and connector sockets use /ws/browser and /ws/connector with protocol 5. A valid account and browser device proof are both required. Existing protocol 4 PC routes can be pinned by LEGACY_PC_KEY_ID, LEGACY_PC_ROUTE_ID and an explicit LEGACY_PC_UNTIL during migration. Legacy routes cannot carry browser commands.
+
+The public home page links to /download. One Windows x64 package per release contains Node, compiled connector code and native image dependencies. Each installation creates or preserves its local device identity and allowed directories. The current Windows user signs in through the system browser and confirms the PC fingerprint. The local settings window can add project roots and request an update. Existing conversations and supported linked previews retain their original reading rules. New conversations and ordinary file downloads use the roots selected on that PC.
+
+The release directory holds a signed stable.json and immutable versioned installers. The package includes a pinned release.pub. The updater verifies the Minisign manifest and installer SHA-256 before execution. The installer uses a per-user task, a version pointer and startup verification. Account authorization and network connectivity are reported separately from local startup health.
+
+Browser themes follow the system by default, with light and dark overrides. Conversation history can appear before the live-state request finishes. Opening a conversation subscribes that browser to the connector-owned task events. Device revocation closes its current sockets and blocks its old application session from private HTTP routes.
+
+The Windows release build converts PowerShell scripts to UTF-8 with BOM for Windows PowerShell 5.1. Build on Windows x64, bundle production dependencies and the matching Node executable, and use NSIS with scripts/connector.nsi. The build directory must include connector-release.json and release.pub. Source and web builds remain npm run build. Run npm run check for the repository checks and the owner access tests for account/device changes.

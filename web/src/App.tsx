@@ -991,6 +991,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
 
   const hasAuthenticationMaterial = useCallback(() => (
     approvedDeviceRef.current
+    || Boolean(window.__CODEX_ANYWHERE_CONFIG__?.owner)
     || Boolean(pairingCredentialRef.current)
   ), []);
 
@@ -1023,7 +1024,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     setConnecting(true);
     setStatusText(reconnectAttemptRef.current ? t('正在重新连接…', 'Reconnecting…') : t('正在连接…', 'Connecting…'));
     const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${scheme}//${location.host}/ws`);
+    const socket = new WebSocket(`${scheme}//${location.host}${window.__CODEX_ANYWHERE_CONFIG__?.owner ? '/ws/browser' : '/ws'}`);
     socketRef.current = socket;
     lastServerActivityRef.current = Date.now();
     socketAuthenticatedRef.current = false;
@@ -1033,7 +1034,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
       try {
         const message = JSON.parse(String(incoming.data)) as BridgeMessage;
         if (message.type === 'auth.challenge') {
-          const protocol = requireCurrentProtocol(message.protocol);
+          const protocol = requireCurrentProtocol(message.protocol, Boolean(window.__CODEX_ANYWHERE_CONFIG__?.owner));
           const challenge = String(message.challenge || '');
           const pairing = pairingCredentialRef.current;
           if (pairing) {
@@ -1050,7 +1051,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
             sendWebSocketFrame(socket, {
               type: 'auth.enroll', role: 'client', pairingId: pairing.id, proof, device, protocol,
             });
-          } else if (approvedDeviceRef.current) {
+          } else if (approvedDeviceRef.current || window.__CODEX_ANYWHERE_CONFIG__?.owner) {
             authAttemptModeRef.current = 'device';
             const device = createBrowserDeviceProof({
               challenge, role: 'client', authProof: DEVICE_KEY_AUTH_CONTEXT,
@@ -1284,16 +1285,28 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
   }, [authenticated, online, refreshSessions]);
 
   const loadHistory = useCallback(async (targetThreadId: string, cursor: string | null, requestVersion: number) => {
+    const executionAtRead = executionVersionRef.current;
+    if (!cursor && window.__CODEX_ANYWHERE_CONFIG__?.owner) void request('session.subscribe', { threadId: targetThreadId, selectionEpoch: requestVersion }).catch(() => undefined);
     const requestChannel = secureChannelRef.current;
     if (!cursor) initialHistoryAttemptRef.current = `${requestVersion}:${connectionEpoch}:${resumeEpoch}`;
     setHistoryLoading(true);
     if (cursor) setOlderHistoryError(false);
+    let publishedConversation = false;
     try {
-      const { page, snapshot, items } = await loadHistoryPage(request, targetThreadId, cursor, HISTORY_PAGE_SIZE);
+      const { page, snapshot, items, historyFailed } = await loadHistoryPage(request, targetThreadId, cursor, HISTORY_PAGE_SIZE, ({ items }) => {
+        if (cursor || requestVersion !== selectedRequestRef.current || threadIdRef.current !== targetThreadId || requestChannel !== secureChannelRef.current) return;
+        setTimeline(items);
+        setInitialHistoryLoaded(true);
+        setHistoryLoading(false);
+        publishedConversation = true;
+        finishInitialBootstrap();
+      });
       if (selectedRequestRef.current !== requestVersion || threadIdRef.current !== targetThreadId
         || secureChannelRef.current !== requestChannel) {
         return;
       }
+      if (publishedConversation && executionAtRead !== executionVersionRef.current) return;
+      if (historyFailed) setStatusText('历史加载失败，当前显示实时内容，请重试。');
       if (cursor) {
         if (messageListRef.current && !viewport.following) viewport.capture(messageListRef.current);
         setTimeline((current) => prependHistoryPage(items, current));
@@ -1301,8 +1314,10 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
       else {
         const state = snapshot || page;
         setContextUsage(normalizeContextUsage(state.contextUsage) || normalizeContextUsage(page.contextUsage) || null);
-        viewport.following = true;
-        viewport.forceBottom = true;
+        if (!publishedConversation) {
+          viewport.following = true;
+          viewport.forceBottom = true;
+        }
         setTimeline(startTimelineCompaction(items, state.activityId || '', epochMillis(state.compactionStartedAt)));
         followFingerprintRef.current = historyFingerprint(state.turns, state.turnProgress);
         latestActivityIdRef.current = state.activityId || '';
@@ -2250,6 +2265,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
   if (initialBootstrapPending && !pairingDialogOpen) return <StartupScreen status={statusText} />;
 
   if (!authenticated) {
+    if (window.__CODEX_ANYWHERE_CONFIG__?.owner) return <main className="login-shell"><section className="login-card"><h1>Codex Anywhere</h1><p>{statusText || '正在连接电脑…'}</p><a href="/_fribench/auth/login?return_to=%2F">重新登录 Fribench</a><p><a href="/download">下载 Windows 客户端</a></p></section></main>;
     return (
       <main className="login-shell">
         <section className="login-card">

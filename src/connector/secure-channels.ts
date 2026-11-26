@@ -32,8 +32,23 @@ const DEDUPLICATED_ACTIONS = new Set([
 ]);
 
 export class ConnectorSecureChannels {
+  beforeRequest: () => void = () => {};
+  invalidateResults() { this.requestResults.clearCompleted(); }
   private readonly identity: DeviceIdentity;
   private readonly deviceId: string;
+  private selections = new Map<string, { threadId: string; epoch: number }>();
+  select(clientId: string, threadId: string, epoch: number) {
+    const previous = this.selections.get(clientId);
+    if (previous && previous.epoch > epoch) return false;
+    this.selections.set(clientId, { threadId, epoch }); return true;
+  }
+  sendThreadEvent(frame: JsonObject) {
+    const threadId = frame.payload?.threadId;
+    for (const [clientId, selection] of this.selections) {
+      if (selection.threadId !== threadId || clientId === frame.clientId) continue;
+      this.sendEvent({ ...frame, clientId, selectionEpoch: selection.epoch });
+    }
+  }
   private readonly send: (frame: JsonObject) => boolean;
   private readonly handleRequest: (frame: JsonObject & { action: string }) => Promise<JsonObject>;
   private readonly channels = new Map<string, SecureChannelState>();
@@ -61,6 +76,7 @@ export class ConnectorSecureChannels {
       const clientId = String(frame.clientId || '');
       this.channels.get(clientId)?.codec.destroy();
       this.channels.delete(clientId);
+      this.selections.delete(clientId);
       return true;
     }
     if (frame.type === 'channel.offer') {
@@ -107,6 +123,7 @@ export class ConnectorSecureChannels {
   }
 
   clear() {
+    this.selections.clear();
     for (const state of this.channels.values()) state.codec.destroy();
     this.channels.clear();
   }
@@ -179,6 +196,7 @@ export class ConnectorSecureChannels {
         throw new Error('secure_channel_frame_invalid');
       }
       const action = request.action;
+      this.beforeRequest();
       state.lastActivity = Date.now();
       this.send({
         type: 'secure', clientId,

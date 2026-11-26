@@ -557,7 +557,7 @@ function MessageBubbleComponent({
           replies={item.questionReplies}
           onReadTextFile={onReadTextFile}
           onDownloadFile={openLocalFile}
-        /> : instructions ? <AgentInstructionsCard instructions={instructions}
+        /> : item.kind === 'user' && /^<codex_internal_context\s+source="goal">[\s\S]*<\/codex_internal_context>$/.test(item.text.trim()) ? <details className="internal-context"><summary>上下文（展开原文）</summary><pre>{item.text}</pre></details> : instructions ? <AgentInstructionsCard instructions={instructions}
           onDownloadFile={openLocalFile} onReadTextFile={onReadTextFile} /> : <MessageMarkdown
           text={item.text}
           attachmentPath={item.attachment?.path}

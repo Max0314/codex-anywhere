@@ -26,21 +26,22 @@ export type CurrentProtocol = {
 
 export function createProtocolOffer(
   capabilities: readonly string[] = BRIDGE_PROTOCOL_CAPABILITIES,
+  owner = false,
 ): ProtocolOffer {
   return {
-    version: BRIDGE_PROTOCOL_VERSION,
+    version: owner ? 5 : BRIDGE_PROTOCOL_VERSION,
     capabilities: normalizeCapabilities(capabilities),
   };
 }
 
-export function requireCurrentProtocol(remote: unknown): CurrentProtocol {
+export function requireCurrentProtocol(remote: unknown, owner = false): CurrentProtocol {
   const remoteOffer = normalizeProtocolOffer(remote);
-  if (remoteOffer.version !== BRIDGE_PROTOCOL_VERSION) throw new Error('protocol_version_unsupported');
+  if (remoteOffer.version !== (owner ? 5 : BRIDGE_PROTOCOL_VERSION)) throw new Error('protocol_version_unsupported');
   const remoteCapabilities = new Set(remoteOffer.capabilities);
   if (BRIDGE_PROTOCOL_CAPABILITIES.some((capability) => !remoteCapabilities.has(capability))) {
     throw new Error('protocol_capability_required');
   }
-  return createProtocolOffer();
+  return createProtocolOffer(undefined, owner);
 }
 
 function normalizeProtocolOffer(value: unknown): ProtocolOffer {

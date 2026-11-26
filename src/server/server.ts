@@ -21,6 +21,7 @@ import {
   requireCurrentProtocol,
   type CurrentProtocol,
 } from '../shared/protocol-contract.js';
+import { OwnerAccess, type OwnerLease } from './owner-access.js';
 import { DeviceRegistry } from './device-registry.js';
 import { ACTIVITY_INTERVAL_MS, DeviceActivity, deviceActivityPath } from './device-activity.js';
 import { currentWebSocketSource, handleHttpRequest, normalizeUiLanguage } from './http.js';
@@ -77,7 +78,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
   const extensionOrigins = options.extensionOrigins ?? (process.env.BRIDGE_EXTENSION_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
   if (extensionOrigins.some((origin) => !/^chrome-extension:\/\/[a-p]{32}$/.test(origin))) throw new Error('invalid_extension_origin_allowlist');
   const connectorToken = String(options.connectorToken || process.env.BRIDGE_CONNECTOR_TOKEN || '');
-  if (connectorToken.length < 32) throw new Error('BRIDGE_CONNECTOR_TOKEN must contain at least 32 characters');
+  if (process.env.ACCESS_MODE !== 'owner' && connectorToken.length < 32) throw new Error('BRIDGE_CONNECTOR_TOKEN must contain at least 32 characters');
   const publicDir = resolve(options.publicDir || defaultPublicDir);
   const staticHandler = sirv(publicDir, {
     dev: !existsSync(publicDir),
@@ -98,11 +99,15 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
       options.connectorToken ? null : resolve('data/devices.json')
     );
   const deviceRegistry = options.deviceRegistry || new DeviceRegistry(configuredRegistryPath);
+  const owner = process.env.ACCESS_MODE === 'owner' ? new OwnerAccess(deviceRegistry) : null;
+  const leases = new Map<AliveWebSocket, OwnerLease>();
   const deviceActivity = new DeviceActivity(deviceActivityPath(deviceRegistry.filePath), () => deviceRegistry.listApproved(), options.clock);
   let activityTimer: ReturnType<typeof setInterval> | undefined;
   const connectors = new Map<string, AliveWebSocket>();
   const clients = new Map<string, AliveWebSocket>();
   const socketMeta = new WeakMap<AliveWebSocket, SocketMeta>();
+  const activeClients = () => new Map([...clients].filter(([, socket]) => !owner || leases.has(socket) && owner.valid(leases.get(socket)!)));
+  const activeConnectors = () => new Map([...connectors].filter(([, socket]) => !owner || leases.has(socket) && !leases.get(socket)!.legacy && owner.valid(leases.get(socket)!)));
   const trustProxy = options.trustProxy ?? process.env.BRIDGE_TRUST_PROXY === '1';
   const sessionMaxAgeMs = positiveInteger(
     options.sessionMaxAgeMs ?? Number(process.env.BRIDGE_SESSION_MAX_AGE_MS),
@@ -117,7 +122,8 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
     clock: options.clock,
   });
 
-  const httpServer = createServer((request, response) => {
+  const httpServer = createServer(async (request, response) => {
+    if (owner && await owner.handle(request, response)) return;
     handleHttpRequest({
       request, response, trustProxy, uiLanguage, staticHandler, extensionOrigins,
     });
@@ -137,7 +143,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
       socket.destroy();
       return;
     }
-    if (request.method !== 'GET' || url.pathname !== '/ws' || !originAllowed(request, extensionOrigins)) {
+    if (request.method !== 'GET' || !(owner ? ['/ws', '/ws/browser', '/ws/connector'].includes(url.pathname) : url.pathname === '/ws') || !originAllowed(request, extensionOrigins)) {
       if (url.pathname === '/ws') socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
@@ -161,17 +167,25 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
     socket.isAlive = true;
     socket.on('pong', () => { socket.isAlive = true; deviceActivity.seen(socket); });
 
-    socket.on('message', (data) => {
+    let authenticating = false;
+    socket.on('message', async (data) => {
       try {
         const message = parseFrame(data);
         const meta = socketMeta.get(socket);
         if (!meta) {
+          if (authenticating) return;
+          authenticating = true;
+          if (owner) {
+            const lease = await owner.authorize(request, message, authChallenge);
+            if (socket.readyState !== WebSocket.OPEN || !owner.valid(lease)) return;
+            leases.set(socket, lease);
+          }
           if (authLimiter.isBlocked(clientAddress)) {
             socket.close(4429, 'authentication temporarily locked');
             return;
           }
           const authenticated = authenticateSocket({
-            socket, message, connectorToken, authChallenge,
+            socket, message, connectorToken, authChallenge, ownerMode: Boolean(owner) && !leases.get(socket)?.legacy,
             connectors, clients, socketMeta, authTimer,
             authLimiter, clientAddress, deviceRegistry,
             extensionOrigin: extensionOrigins.includes(String(request.headers.origin)) ? String(request.headers.origin) : '',
@@ -181,11 +195,16 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
             deviceActivity.connected(socket, identity.role, identity.device.id);
             sessionTimer = setTimeout(() => socket.close(4005, 'authentication expired'), sessionMaxAgeMs);
             sessionTimer.unref?.();
-            broadcastPresence(clients, connectors, deviceRegistry);
+            broadcastPresence(activeClients(), activeConnectors(), deviceRegistry);
           }
           return;
         }
+        if (owner && (!leases.has(socket) || !owner.valid(leases.get(socket)!))) { socket.close(4403, 'authorization expired'); return; }
         deviceActivity.seen(socket);
+        if (owner && message.type === 'relay.release.grant' && meta.role === 'connector') {
+          safeSend(socket, { type: 'relay.release.result', requestId: message.requestId, data: owner.releaseGrant(leases.get(socket)!) });
+          return;
+        }
         if (message.type === 'relay.request' && meta.role === 'client') {
           const requestId = String(message.requestId || '').slice(0, 128);
           try {
@@ -193,7 +212,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
             if (message.action !== 'device.rename') throw new Error('unsupported_relay_action');
             const data = deviceRegistry.renameConnector(String(message.payload?.deviceId || ''), message.payload?.label);
             safeSend(socket, { type: 'relay.response', requestId, ok: true, data });
-            broadcastPresence(clients, connectors, deviceRegistry);
+            broadcastPresence(activeClients(), activeConnectors(), deviceRegistry);
           } catch (error) {
             safeSend(socket, { type: 'relay.response', requestId, ok: false, error: publicError(error) });
           }
@@ -204,18 +223,21 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
           return;
         }
         if (meta.role === 'client') {
-          routeClientMessage({ socket, meta, message, connectors });
+          routeClientMessage({ socket, meta, message, connectors: activeConnectors() });
         } else {
-          routeConnectorMessage({ message, clients, meta });
+          if (connectors.get(meta.deviceId) !== socket) return;
+          routeConnectorMessage({ message, clients: activeClients(), meta });
         }
       } catch (error) {
         safeSend(socket, { type: 'error', error: publicError(error) });
+        if (!socketMeta.has(socket)) socket.close(4403, 'authorization required');
       }
     });
 
     socket.on('close', () => {
       clearTimeout(authTimer);
       if (sessionTimer) clearTimeout(sessionTimer);
+      leases.delete(socket);
       deviceActivity.disconnected(socket);
       const meta = socketMeta.get(socket);
       if (!meta) return;
@@ -226,13 +248,17 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
         }
       }
       if (meta.role === 'connector' && connectors.get(meta.deviceId) === socket) connectors.delete(meta.deviceId);
-      broadcastPresence(clients, connectors, deviceRegistry);
+      broadcastPresence(activeClients(), activeConnectors(), deviceRegistry);
     });
     safeSend(socket, {
-      type: 'auth.challenge', challenge: authChallenge, protocol: createProtocolOffer(),
+      type: 'auth.challenge', challenge: authChallenge, protocol: createProtocolOffer(undefined, Boolean(owner) && request.url !== '/ws'),
     });
   });
 
+  owner && (owner.onRevoke = (role, id) => { for (const [socket, lease] of leases) if (lease.device.role === role && lease.device.id === id) socket.close(4403, 'device revoked'); });
+  const renewals = new Set<AliveWebSocket>();
+  const renewalTimer = setInterval(() => { if (!owner) return; for (const [socket, lease] of leases) { if (renewals.has(socket) || Date.now() + 1000 < lease.expires) continue; renewals.add(socket); void owner.renew(lease).catch(() => socket.close(4403, 'authorization expired')).finally(() => renewals.delete(socket)); } }, 1000);
+  renewalTimer.unref();
   const heartbeat = setInterval(() => {
     for (const rawSocket of webSocketServer.clients) {
       const socket = rawSocket as AliveWebSocket;
@@ -248,7 +274,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
       socket.isAlive = false;
       socket.ping();
     }
-    broadcastPresence(clients, connectors, deviceRegistry);
+    broadcastPresence(activeClients(), activeConnectors(), deviceRegistry);
   }, heartbeatIntervalMs);
   heartbeat.unref?.();
 
@@ -269,6 +295,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
       return httpServer.address();
     },
     async close() {
+      clearInterval(renewalTimer);
       clearInterval(heartbeat);
       clearInterval(activityTimer);
       deviceActivity.stop();
@@ -281,7 +308,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
 
 function authenticateSocket({
   socket, message, connectorToken, authChallenge,
-  connectors, clients, socketMeta, authTimer, authLimiter, clientAddress, deviceRegistry, extensionOrigin,
+  connectors, clients, socketMeta, authTimer, authLimiter, clientAddress, deviceRegistry, extensionOrigin, ownerMode = false,
 }: {
   socket: AliveWebSocket;
   message: JsonObject;
@@ -295,13 +322,14 @@ function authenticateSocket({
   clientAddress: string;
   deviceRegistry: DeviceRegistry;
   extensionOrigin: string;
+  ownerMode?: boolean;
 }) {
   const authType = String(message.type || '');
   const role = message.role === 'connector' ? 'connector' : message.role === 'client' ? 'client' : '';
   const deviceId = normalizeAuthDeviceId(message.deviceId);
   let protocol: CurrentProtocol;
   try {
-    protocol = requireCurrentProtocol(message.protocol);
+    protocol = requireCurrentProtocol(message.protocol, ownerMode);
   } catch {
     socket.close(4406, 'protocol version unsupported');
     return false;
@@ -336,7 +364,7 @@ function authenticateSocket({
   } else if (!device) {
     socket.close(4406, 'device authentication required');
     return false;
-  } else if (authType === 'auth.device' && role === 'client') {
+  } else if (authType === 'auth.device' && (role === 'client' || ownerMode && role === 'connector')) {
     deviceAuthContext = DEVICE_KEY_AUTH_CONTEXT;
     authMode = 'device';
   } else if (authType === 'auth.link' && role === 'client') {
