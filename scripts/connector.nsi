@@ -8,7 +8,6 @@ OutFile "Fribench-Codex-Connector-x64.exe"
 InstallDir "$LOCALAPPDATA\Fribench\CodexConnector\versions\${VERSION}"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
-Page directory
 Page instfiles
 Section
   SetOutPath "$INSTDIR"

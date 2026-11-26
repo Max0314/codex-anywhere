@@ -137,17 +137,31 @@ export function createRequestHandler({
       .catch(() => { /* app-server status remains the fallback when Desktop is unavailable */ })
       .finally(() => { desktopStatusRefresh = null; });
   };
+  const controlQueues = new Map<string, Promise<unknown>>();
   return async function handleRequest(message: BridgeRequest) {
     const {
       action, payload = {}, requestId, clientId, clientDeviceId,
     } = message;
     try {
-      const run = () => dispatchAction({
+      const run = () => {
+        if (process.env.BRIDGE_OWNER_MODE === '1' && action === 'turn.start' && payload.intent === 'start' && payload.threadId && codex.getActiveTurn(payload.threadId)) throw new Error('turn_changed');
+        return dispatchAction({
         action, payload, requestId, clientId, clientDeviceId,
         codex, desktop, attachments, fileUploads, visualizations, downloads, deviceId, deviceLabel, mode, browser,
         networkAccess, allowFullAccess, getDesktopStatuses, refreshDesktopThreads,
-      });
-      const data = await (MEASURED_ACTIONS.has(action) ? measureOperation(action, run) : run());
+        });
+      };
+      const key = String(payload.threadId || clientDeviceId || clientId || 'new');
+      const queued = process.env.BRIDGE_OWNER_MODE === '1' && /^(turn\.|approval\.|session\.permissions\.update)/.test(action);
+      let queue: Promise<unknown> | undefined;
+      const execute = () => {
+        if (!queued) return run();
+        queue = (controlQueues.get(key) || Promise.resolve()).catch(() => {}).then(run);
+        controlQueues.set(key, queue);
+        void queue.finally(() => { if (controlQueues.get(key) === queue) controlQueues.delete(key); }).catch(() => {});
+        return queue;
+      };
+      const data = await (MEASURED_ACTIONS.has(action) ? measureOperation(action, execute) : execute());
       return { type: 'response', clientId, requestId, ok: true, data };
     } catch (error) {
       return { type: 'response', clientId, requestId, ok: false, error: publicError(error) };

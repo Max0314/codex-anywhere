@@ -15,7 +15,11 @@ if($pointer.pending){
         $process.Refresh()
         if($process.HasExited){break}
         $status = & (Join-Path $appRoot 'runtime/node.exe') (Join-Path $appRoot 'build/connector/owner-status.js') 2>$null
-        if($LASTEXITCODE -eq 0){$healthy=$true;break}
+        if($LASTEXITCODE -eq 0){
+            $observed=$status | ConvertFrom-Json
+            $expected=Get-Content -LiteralPath (Join-Path $appRoot 'connector-release.json') -Raw | ConvertFrom-Json
+            if($observed.version -eq $expected.version){$healthy=$true;break}
+        }
     }
     if($healthy){
         $pointer.pending=$false
@@ -24,6 +28,8 @@ if($pointer.pending){
     } elseif($pointer.previous -and (Test-Path -LiteralPath (Join-Path $pointer.previous 'scripts/connector-settings.ps1'))){
         $process.Refresh()
         if(-not $process.HasExited){ Stop-Process -Id $process.Id -Force }
+        $compiled = [IO.Path]::GetFullPath((Join-Path $appRoot 'build/connector/index.js'))
+        Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($compiled,[StringComparison]::OrdinalIgnoreCase) -ge 0 } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
         $pointer.current=$pointer.previous
         $pointer.pending=$false
         $pointer | ConvertTo-Json | Set-Content -LiteralPath ($pointerPath+'.tmp') -Encoding UTF8

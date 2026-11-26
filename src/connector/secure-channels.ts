@@ -1,5 +1,5 @@
 import type { DeviceIdentity } from '../shared/device-auth.js';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { RequestReplayCache } from './request-replay.js';
 import {
   SecureChannelCodec,
@@ -37,6 +37,9 @@ export class ConnectorSecureChannels {
   private readonly identity: DeviceIdentity;
   private readonly deviceId: string;
   private selections = new Map<string, { threadId: string; epoch: number }>();
+  private readonly streamId = randomUUID();
+  private sequence = 0;
+  private textSnapshots = new Map<string, string>();
   select(clientId: string, threadId: string, epoch: number) {
     const previous = this.selections.get(clientId);
     if (previous && previous.epoch > epoch) return false;
@@ -44,9 +47,20 @@ export class ConnectorSecureChannels {
   }
   sendThreadEvent(frame: JsonObject) {
     const threadId = frame.payload?.threadId;
+    const seq = ++this.sequence;
+    let event = frame.event;
+    let payload = frame.payload;
+    if (event === 'turn.delta') {
+      const key = [threadId, payload.turnId, payload.itemId || payload.phase].join(':');
+      const fullText = (this.textSnapshots.get(key) || '') + String(payload.delta || '');
+      this.textSnapshots.set(key, fullText);
+      if (this.textSnapshots.size > 256) this.textSnapshots.delete(this.textSnapshots.keys().next().value!);
+      event = 'thread.text-snapshot';
+      payload = { ...payload, fullText, sourceItemId: key };
+    }
     for (const [clientId, selection] of this.selections) {
       if (selection.threadId !== threadId || clientId === frame.clientId) continue;
-      this.sendEvent({ ...frame, clientId, selectionEpoch: selection.epoch });
+      this.sendEvent({ ...frame, event, payload, clientId, streamId: this.streamId, seq, selectionEpoch: selection.epoch });
     }
   }
   private readonly send: (frame: JsonObject) => boolean;

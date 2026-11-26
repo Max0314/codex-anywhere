@@ -88,6 +88,9 @@ export type NativeDesktopState = { threadId: string; status: string; turnId: str
 export type PendingApprovals = { approvals: Approval[]; externalApproval?: Approval;
   desktopState?: { status: string; waitingOnApproval: boolean } & Partial<NativeDesktopState>; desktopStatusUnavailable?: boolean; activeTurn?: OwnedTurn | null };
 export type BridgeMessage = {
+  selectionEpoch?: number;
+  streamId?: string;
+  seq?: number;
   type: string;
   protocol?: ProtocolOffer | CurrentProtocol;
   challenge?: string;

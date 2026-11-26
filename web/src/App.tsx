@@ -547,7 +547,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     action: string,
     payload: Record<string, unknown>,
     options: RequestOptions = {},
-  ): Promise<T> => requestManagerRef.current!.request<T>(action, payload, options), []);
+  ): Promise<T> => requestManagerRef.current!.request<T>(action, window.__CODEX_ANYWHERE_CONFIG__?.owner && /^(turn.start|turn.steer)$/.test(action) ? { ...payload, intent: action === 'turn.start' ? 'start' : 'steer' } : payload, options), []);
 
   const { fileDownload, downloadLocalFile, cancelFileDownload } = useFileTransfer({
     online, request, reportTimelineError, environmentIdRef, selectedRequestRef, connectorOnlineRef, secureChannelRef,
@@ -659,6 +659,30 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
   }, [refreshSessions, replayPendingRequests]);
 
   const handleBridgeMessage = useCallback((message: BridgeMessage) => {
+    if (message.type === 'event' && /^(turn\.|tool\.|desktop\.)/.test(message.event || '')) executionVersionRef.current++;
+    if (message.selectionEpoch !== undefined && message.selectionEpoch !== selectedRequestRef.current) return;
+    if (message.event === 'thread.text-snapshot') {
+      const payload = message.payload || {};
+      const targetThread = String(payload.threadId || '');
+      if (targetThread !== threadIdRef.current) return;
+      executionVersionRef.current++;
+      const fullText = String(payload.fullText || '');
+      const sourceItemId = String(payload.sourceItemId || '');
+      const kind = payload.phase === 'final_answer' ? 'assistant' : 'progress';
+      setTimeline(items => {
+        const index = items.findIndex(item => item.sourceItemId === sourceItemId);
+        if (index >= 0) return items.map((item, i) => i === index ? { ...item, text: fullText } : item);
+        let previous = -1;
+        for (let i = items.length - 1; i >= 0; i--) {
+          const item = items[i];
+          if (item.historyTurnId === payload.turnId && item.kind === kind && Boolean(item.text) && fullText.startsWith(item.text)) { previous = i; break; }
+        }
+        if (previous >= 0) return items.map((item, i) => i === previous ? { ...item, sourceItemId, text: fullText } : item);
+        return [...items, { id: makeId(), kind, text: fullText, sourceItemId, transient: true, historyTurnId: String(payload.turnId || '') }];
+      });
+      if (viewport.following) viewport.forceBottom = true;
+      return;
+    }
     if (message.type === 'auth.pairing') {
       setStatusText(t('当前设备等待批准', 'This device is waiting for approval'));
       return;
@@ -1293,11 +1317,13 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     if (cursor) setOlderHistoryError(false);
     let publishedConversation = false;
     try {
-      const { page, snapshot, items, historyFailed } = await loadHistoryPage(request, targetThreadId, cursor, HISTORY_PAGE_SIZE, ({ items }) => {
+      const { page, snapshot, items, historyFailed } = await loadHistoryPage(request, targetThreadId, cursor, HISTORY_PAGE_SIZE, ({ page: earlyPage, items }) => {
         if (cursor || requestVersion !== selectedRequestRef.current || threadIdRef.current !== targetThreadId || requestChannel !== secureChannelRef.current) return;
-        setTimeline(items);
+        const turnIds = new Set(items.map(item => item.historyTurnId).filter((id): id is string => Boolean(id)));
+        setTimeline(current => mergeHistorySnapshot(current, items, turnIds, { partial: true }));
         setInitialHistoryLoaded(true);
         setHistoryLoading(false);
+        setNextCursor(earlyPage.nextCursor || null);
         publishedConversation = true;
         finishInitialBootstrap();
       });

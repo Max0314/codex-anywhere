@@ -1,5 +1,9 @@
-import { ownerCommand } from './owner-control.js';
+import { ownerCommand } from "./owner-control.js";
 void (async () => {
-  await ownerCommand('prepare');
-  await ownerCommand('stop');
-})().catch(async error => { await ownerCommand('resume').catch(() => {}); console.error(error.message); process.exitCode = 1; });
+  await ownerCommand("prepare");
+  await ownerCommand("stop");
+})().catch(async (error) => {
+  await ownerCommand("resume").catch(() => {});
+  console.error(error.message);
+  process.exitCode = 1;
+});

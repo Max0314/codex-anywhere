@@ -201,6 +201,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
         }
         if (owner && (!leases.has(socket) || !owner.valid(leases.get(socket)!))) { socket.close(4403, 'authorization expired'); return; }
         deviceActivity.seen(socket);
+        if (owner && leases.get(socket)?.legacy) return;
         if (owner && message.type === 'relay.release.grant' && meta.role === 'connector') {
           safeSend(socket, { type: 'relay.release.result', requestId: message.requestId, data: owner.releaseGrant(leases.get(socket)!) });
           return;

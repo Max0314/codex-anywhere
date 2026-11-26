@@ -69,12 +69,14 @@ const browser = process.env.BRIDGE_BROWSER_ENDPOINT_FILE
   ? new BrowserSessionBroker(deviceId, (frame) => secureChannels.sendEvent(frame)) : undefined;
 const browserEndpoint = browser
   ? await startBrowserEndpoint(browser, process.env.BRIDGE_BROWSER_ENDPOINT_FILE!) : undefined;
+const fileUploads = new FileUploadManager();
+let requestsInFlight = 0;
 const handleRequest = createRequestHandler({
   onSessionStatuses: snapshot => secureChannels.broadcastEvent({ type: 'event', event: 'sessions.status', payload: snapshot }),
   browser,
   codex,
   desktop,
-  fileUploads: new FileUploadManager(),
+  fileUploads,
   attachments: {
     save: saveImageAttachment,
     nativeInput: resolveNativeImageAttachment,
@@ -100,7 +102,8 @@ const secureChannels = new ConnectorSecureChannels({
       const accepted = secureChannels.select(request.clientId || '', String(request.payload?.threadId || ''), Number(request.payload?.selectionEpoch || 0));
       return { type: 'response', clientId: request.clientId, requestId: request.requestId, ok: true, data: { accepted } };
     }
-    return handleRequest(request);
+    requestsInFlight++;
+    try { return await handleRequest(request); } finally { requestsInFlight--; }
   },
 });
 let policyText = '';
@@ -127,7 +130,7 @@ let releaseRequest: { id: string; resolve: (value: unknown) => void; reject: (er
 const ownerControl = process.env.BRIDGE_OWNER_MODE === '1' ? startOwnerControl(async command => {
   // Native Desktop tasks own a separate process and continue across observer
   // updates. Connector-owned turns and file transfers must drain first.
-  const busy = codex.activeTurns.size > 0 || downloads.sessions.size > 0;
+  const busy = codex.activeTurns.size > 0 || requestsInFlight > 0 || fileUploads.hasActiveTransfers() || [...downloads.sessions.values()].some(session => !session.completed || session.busy);
   if (command === 'status') {
     const version = process.env.BRIDGE_INSTALL_VERSION || 'source';
     return { busy, connected: connectorAuthenticated, maintenance, version };

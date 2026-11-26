@@ -62,6 +62,7 @@ export type TimelineKind = 'user' | 'assistant' | 'progress' | 'system' | 'error
 export type ImageAttachment = { path: string; name: string; source?: 'generated' | 'local' };
 export type VisualizationArtifact = { path: string; name: string; source: 'visualize' };
 export type TimelineItem = {
+  sourceItemId?: string;
   compactionProgress?: { startedAt: number; status: 'inProgress' | 'completed' };
   questions?: AsyncQuestion[];
   questionReplies?: QuestionReply[];
