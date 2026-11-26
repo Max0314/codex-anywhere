@@ -12,7 +12,7 @@ export function SessionNoticeIcon({ kind }: { kind: 'computer' | 'archive' | 'ch
   </svg>;
 }
 
-export function ApprovalNotice({ approval, online, refreshing, error, onOpen, onRefresh, onArchive, onAnswer }: {
+export function ApprovalNotice({ approval, online, refreshing, error, onRefresh, onArchive, onAnswer }: {
   approval: Approval; online: boolean; refreshing: boolean; error: string;
   onOpen: () => void; onRefresh: () => void; onArchive?: () => void; onAnswer: (approved: boolean) => void;
 }) {
@@ -37,7 +37,6 @@ export function ApprovalNotice({ approval, online, refreshing, error, onOpen, on
           aria-label={t('停止等待并归档', 'Stop waiting and archive')} title={t('停止等待并归档', 'Stop waiting and archive')}>
           {t('结束等待…', 'End wait…')}
         </button>}
-        <button className="notice-primary" type="button" disabled={!online} onClick={onOpen}>{t('在电脑端打开', 'Open on computer')}</button>
       </> : <>
         <button type="button" disabled={!online} onClick={() => onAnswer(false)}>{t('拒绝', 'Reject')}</button>
         <button className="notice-primary" type="button" disabled={!online} onClick={() => onAnswer(true)}>{t('批准一次', 'Approve once')}</button>

@@ -130,7 +130,8 @@ import {
 import type { TimelineNotice } from '../../src/shared/timeline-notice';
 import { appendTimelineNotice } from './timeline-notice-events';
 import { clearPendingCompactions, finishTimelineCompaction, startTimelineCompaction, syncTimelineCompaction } from './compaction-timeline';
-import { PresenceIndicator } from './presence-indicator';
+import { AccountQuota } from './account-quota';
+import { BrandIcon } from './brand-icon';
 import { PermissionModeControl } from './permission-mode-control';
 import { BrowserSessionStatus } from './browser-session-status';
 import { useSidePanelSession } from './sidepanel-session';
@@ -237,7 +238,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
   const [sessionSearch, setSessionSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
+  const [, setContextUsage] = useState<ContextUsage | null>(null);
   const [editTarget, setEditTarget] = useState<{ item: TimelineItem; threadId: string; environment: string; selection: number } | null>(null);
   const [editingMessage, setEditingMessage] = useState(false);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
@@ -1099,7 +1100,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
         return;
       }
       const replayPending = reconnectWantedRef.current
-        && ![4003, 4403, 4406, 4407, 4429].includes(event.code);
+        && ![4003, 4401, 4403, 4406, 4407, 4429].includes(event.code);
       socketRef.current = null;
       socketAuthenticatedRef.current = false;
       onlineEnvironmentIdsRef.current = [];
@@ -1125,9 +1126,20 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
         setAuthenticated(false);
         finishInitialBootstrap();
         approvedDeviceRef.current = false;
-        clearBrowserDeviceApproval();
+        if (!window.__CODEX_ANYWHERE_CONFIG__?.owner) clearBrowserDeviceApproval();
         reconnectWantedRef.current = false;
-        setStatusText(t('这台设备的授权已失效，请重新配对', 'This device is no longer approved. Pair it again.'));
+        setStatusText(window.__CODEX_ANYWHERE_CONFIG__?.owner
+          ? t('此浏览器的访问权限已被撤销，请检查 Fribench 设备授权。', 'Browser access was revoked. Check your Fribench device permissions.')
+          : t('这台设备的授权已失效，请重新配对', 'This device is no longer approved. Pair it again.'));
+        window.dispatchEvent(new Event('fribench:account-change'));
+        return;
+      }
+      if (event.code === 4401) {
+        setAuthenticated(false);
+        finishInitialBootstrap();
+        reconnectWantedRef.current = false;
+        setStatusText(t('Fribench 登录已过期，请重新登录。', 'Your Fribench session expired. Sign in again.'));
+        window.dispatchEvent(new Event('fribench:account-change'));
         return;
       }
       if (event.code === 4407) {
@@ -2301,11 +2313,11 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
   if (initialBootstrapPending && !pairingDialogOpen) return <StartupScreen status={statusText} />;
 
   if (!authenticated) {
-    if (window.__CODEX_ANYWHERE_CONFIG__?.owner) return <main className="login-shell"><section className="login-card"><h1>Codex Anywhere</h1><p>{statusText || '正在连接电脑…'}</p><a href="/_fribench/auth/login?return_to=%2F">重新登录 Fribench</a><p><a href="/download">下载 Windows 客户端</a></p></section></main>;
+    if (window.__CODEX_ANYWHERE_CONFIG__?.owner) return <main className="login-shell"><section className="login-card owner-login-card"><div className="owner-login-mark"><BrandIcon /></div><h1>连接需要恢复</h1><p role="status">{statusText || '正在连接电脑…'}</p><button className="owner-login-button owner-retry" onClick={() => location.reload()}>重新连接</button><p><a href="/_fribench/auth/login?return_to=%2F">重新登录 Fribench</a></p><a className="owner-download-link" href="/download">下载 Windows 客户端</a></section></main>;
     return (
       <main className="login-shell">
         <section className="login-card">
-          <div className="brand-mark">C</div>
+          <div className="brand-mark"><BrandIcon /></div>
           <p className="eyebrow">PRIVATE BRIDGE</p>
           <h1>{t('连接 Codex Anywhere', 'Connect to Codex Anywhere')}</h1>
           <p className="login-copy">{t('使用管理员生成的十分钟单次配对链接连接这台设备。', 'Connect this device with a ten-minute, single-use pairing link from the administrator.')}</p>
@@ -2571,6 +2583,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
               />
               <PermissionModeControl
                 key={`permission:${environmentId}:${threadId}`}
+                readOnly={connectorStatus?.mode === 'desktop'}
                 config={permissionConfig}
                 loading={permissionConfigLoading}
                 disabled={!online || executionActive}
@@ -2581,11 +2594,12 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
               <BrowserSessionStatus key={`${environmentId}:${threadId}`} environmentId={environmentId} threadId={threadId} online={online} request={request} />
             </div>
           </div>
-          <PresenceIndicator
+          <AccountQuota
+            environmentId={environmentId}
+            request={request}
             online={online}
             executionState={executionState}
             statusText={statusText}
-            contextUsage={contextUsage}
           />
         </header>
 

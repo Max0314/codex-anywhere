@@ -12,7 +12,7 @@ function fastTierAvailable(model: ModelOption | undefined) {
 }
 
 export function ModelConfigControl({
-  config, loading, disabled, onSave, hasSession = false, onRefresh, onOpenDesktop, onReset,
+  config, loading, disabled, onSave, hasSession = false, onRefresh, onReset,
 }: {
   config: SessionModelConfig | null;
   loading: boolean;
@@ -126,13 +126,6 @@ export function ModelConfigControl({
         {config.hasOverride && onReset && <button type="button" disabled={disabled || saving} onClick={reset}>
           {t('跟随电脑端', 'Follow computer')}
         </button>}
-        {onOpenDesktop && <footer><button type="button" disabled={saving} onClick={() => {
-          if (saving) return;
-          setSaving(true); setError('');
-          void onOpenDesktop().then(() => setOpen(false)).catch(error => setError(friendlyError(error))).finally(() => setSaving(false));
-        }}>
-          {t('在电脑端打开此会话', 'Open this task on the computer')}
-        </button></footer>}
         {error && <p role="alert">{error}</p>}
       </div>}
       {open && draft && config && !config.unavailableReason && (

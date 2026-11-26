@@ -111,6 +111,7 @@ export const SessionSidebar = memo(function SessionSidebar({
           />
         </label>
       )}
+      <div className="session-status-legend"><span><i />进行中</span><span><i />完成未读</span></div>
       <nav className="session-list">
         {visibleSessions.map((session) => {
           const sessionRunning = isSessionRunning(session.status)

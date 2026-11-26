@@ -268,7 +268,7 @@ function extractImageAttachment(text: string): ImageAttachment | undefined {
   if (!path) return undefined;
   const metadataName = /(?:^|\r?\n)##\s+([^:\r\n]+):\s+[A-Za-z]:[\\/]/m.exec(decoded)?.[1]?.trim();
   const fallbackName = path.split(/[\\/]/).at(-1) || t('图片', 'Image');
-  return { path, name: metadataName || fallbackName };
+  return { path, name: metadataName || fallbackName, source: 'local' };
 }
 
 export function historyFingerprint(turns: Turn[], progress?: unknown) {

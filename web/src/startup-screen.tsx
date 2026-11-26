@@ -1,11 +1,12 @@
 import { t } from './i18n';
+import { BrandIcon } from './brand-icon';
 
 export function StartupScreen({ status }: { status: string }) {
   return (
     <main className="startup-shell" aria-busy="true" aria-live="polite">
       <div className="startup-visual" aria-hidden="true">
         <div className="startup-orbit"><i /><i /><i /></div>
-        <div className="startup-mark"><span>C</span><i /></div>
+        <div className="startup-mark"><BrandIcon /><i /></div>
       </div>
       <div className="startup-copy">
         <strong>CODEX ANYWHERE</strong>

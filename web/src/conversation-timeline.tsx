@@ -10,6 +10,7 @@ import { t } from './i18n';
 import type { TextPreviewDocument, TurnDiffDocument } from './app-types';
 import type { QuestionReply } from '../../src/shared/async-questions';
 import { AsyncQuestionCard } from './async-question-card';
+import { hiddenInternalContext } from './internal-context';
 
 const MessageBubble = lazy(() => import('./message-bubble').then((module) => ({
   default: module.MessageBubble,
@@ -87,7 +88,7 @@ export const ConversationTimeline = memo(function ConversationTimeline({
     item.kind === 'user' && (!item.transient || item.completedAt)
       ? (item.questionReplies || []).map((reply) => [reply.questionItemId, reply.answer] as const) : []
   )), ...Object.entries(resolvedQuestionAnswers || {})]), [timeline, resolvedQuestionAnswers]);
-  const resolvedItems = useMemo(() => timeline.map((item) => {
+  const resolvedItems = useMemo(() => timeline.filter(item => !hiddenInternalContext(item)).map((item) => {
     const attachment = resolveTimelineAttachment(item, threadId, knownAttachments, environmentId);
     return {
       attachment,

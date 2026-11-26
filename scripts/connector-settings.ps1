@@ -28,6 +28,7 @@ $env:BRIDGE_OWNER_MODE = '1'
 $env:BRIDGE_CONFIG_FILE = $configFile
 $releaseFile = Join-Path $appRoot 'connector-release.json'
 if(Test-Path -LiteralPath $releaseFile){$env:BRIDGE_INSTALL_VERSION = (Get-Content -LiteralPath $releaseFile -Raw | ConvertFrom-Json).version}
+$env:BRIDGE_INSTALL_ROOT = $appRoot
 $env:BRIDGE_URL = 'wss://codex.fribench.cn/ws/connector'
 $env:CODEX_ALLOWED_ROOTS_JSON = ConvertTo-Json -InputObject @($config.allowedRoots) -Compress
 $env:CODEX_NETWORK_ACCESS = if($config.networkAccess){'1'}else{'0'}
@@ -117,7 +118,7 @@ $form.Controls.Add($connect)
 $start = New-Object Windows.Forms.Button
 $start.Text = '启动连接器'
 $start.SetBounds(200,310,160,40)
-$start.Add_Click({ Start-ScheduledTask -TaskName 'Codex Anywhere Connector'; [Windows.Forms.MessageBox]::Show('已请求启动。') })
+$start.Add_Click({ . (Join-Path $PSScriptRoot 'connector-start.ps1'); Start-ConnectorRuntime (Join-Path $env:LOCALAPPDATA 'Fribench/CodexConnector'); [Windows.Forms.MessageBox]::Show('已请求启动。') })
 $form.Controls.Add($start)
 $download = New-Object Windows.Forms.LinkLabel
 $download.Text = '检查并安装更新'

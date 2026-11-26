@@ -35,6 +35,7 @@ type CodexGateway = {
   readStoredPermissionConfig?(threadId: string, options?: { readOnly?: boolean }): Promise<any>;
   updateStoredPermissionConfig?(threadId: string, value: any): Promise<any>;
   listModels?(options?: { allowStale?: boolean }): Promise<any[]>;
+  readAccountLimits?(): Promise<any>;
   updateModelConfig(threadId: string, value: Payload): Promise<any>;
   readPermissionMode(threadId: string, options?: { fresh?: boolean }): Promise<any>;
   updatePermissionMode(threadId: string, mode: unknown): Promise<any>;
@@ -193,6 +194,10 @@ async function dispatchAction({
     if (action === 'browser.revoke') return browser.revoke(client, payload.grantId);
     if (action === 'browser.result') return browser.result(client, payload);
     throw new Error('browser_unknown_action');
+  }
+  if (action === 'account.rate-limits.read') {
+    if (!codex.readAccountLimits) throw new Error('rate_limits_unavailable');
+    return codex.readAccountLimits();
   }
   if (action === 'connector.status') {
     const desktopState = mode === 'desktop' ? await desktop?.getCapabilities?.() : undefined;

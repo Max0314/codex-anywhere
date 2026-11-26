@@ -29,7 +29,7 @@ function permissionModeLabel(mode: PermissionMode | 'custom') {
 }
 
 export function PermissionModeControl({
-  config, loading, disabled, onChange, onRefresh, onOpenDesktop, newSession = false,
+  config: sourceConfig, loading, disabled, onChange, onRefresh, newSession = false, readOnly = false,
 }: {
   config: SessionPermissionConfig | null;
   loading: boolean;
@@ -38,11 +38,12 @@ export function PermissionModeControl({
   onRefresh?: () => Promise<void>;
   onOpenDesktop?: () => Promise<void>;
   newSession?: boolean;
+  readOnly?: boolean;
 }) {
+  const config = readOnly && sourceConfig ? { ...sourceConfig, editable: false } : sourceConfig;
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [desktopOpened, setDesktopOpened] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -50,13 +51,12 @@ export function PermissionModeControl({
     setError('');
   }, [config?.editable]);
 
-  const runAction = async (action: () => Promise<void>, openingDesktop = false) => {
+  const runAction = async (action: () => Promise<void>) => {
     if (saving) return;
     setSaving(true);
     setError('');
     try {
       await action();
-      if (openingDesktop) setDesktopOpened(true);
     } catch (actionError) {
       setError(friendlyError(actionError));
     } finally {
@@ -101,7 +101,6 @@ export function PermissionModeControl({
         onClick={() => {
           setOpen((current) => !current);
           setError('');
-          setDesktopOpened(false);
           if (!open && !config?.editable && onRefresh) void runAction(onRefresh);
         }}
         aria-expanded={open}
@@ -138,10 +137,8 @@ export function PermissionModeControl({
             <div className="permission-mode-desktop">
               <p>{t('当前权限：', 'Current access: ')}<strong>{config.modeKnown === false ? t('未获取最新设置', 'Latest settings unavailable') : permissionModeLabel(config.mode)}</strong></p>
               <div>
-                {config.canOpenOnDesktop && onOpenDesktop && <button type="button" disabled={saving || loading} onClick={() => void runAction(onOpenDesktop, true)}>{t('在电脑端打开此会话', 'Open this task on the computer')}</button>}
                 {onRefresh && <button type="button" disabled={saving || loading} onClick={() => void runAction(onRefresh)}>{loading ? t('读取权限…', 'Loading access…') : t('刷新权限', 'Refresh permissions')}</button>}
               </div>
-              {desktopOpened && <p role="status">{t('已在电脑端打开此会话，请在那里修改权限。', 'Opened this task on the computer. Change its permissions there.')}</p>}
             </div>
           ) : <><div className="permission-mode-options">
             {OPTIONS.map((option) => {

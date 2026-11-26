@@ -23,6 +23,13 @@ import {
 import { DEVICE_KEY_AUTH_CONTEXT } from "../shared/pairing-auth.js";
 import { DeviceRegistry } from "./device-registry.js";
 
+export function ownerAuthorizationCloseCode(error: unknown) {
+  const value = error as { status?: number; message?: string };
+  if (value.status === 401) return 4401;
+  if (value.message === 'device_proof_invalid' || value.message === 'browser_identity_changed') return 4407;
+  return value.status === 403 || value.status === 409 ? 4403 : 1013;
+}
+
 type Device = {
   role: "client" | "connector";
   id: string;
@@ -176,6 +183,9 @@ export class OwnerAccess {
         },
         (res) => {
           let data = "";
+          res.on('error', reject);
+          res.on('aborted', () => reject(Object.assign(Error('identity_unavailable'), { status: 503 })));
+          res.on('close', () => { if (!res.complete) reject(Object.assign(Error('identity_unavailable'), { status: 503 })); });
           res.on("data", (chunk) => {
             data += chunk;
             if (data.length > 65536)
@@ -885,5 +895,5 @@ function escapeHtml(value: string) {
   );
 }
 function page(title: string, body: string) {
-  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/owner.css"><title>${title}</title><main>${body}</main></html>`;
+  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="theme-color" content="#ffffff"><link rel="icon" type="image/png" href="/icons/icon-32.png?v=3"><link rel="apple-touch-icon" href="/icons/icon-180.png?v=3"><script src="/theme-init.js"></script><link rel="stylesheet" href="/owner.css"><title>${title}</title><main>${body}</main></html>`;
 }

@@ -7,7 +7,7 @@ import { PermissionModeControl } from '../web/src/permission-mode-control.js';
 import { useSessionConfiguration } from '../web/src/session-configuration.js';
 import type { BridgeRequest } from '../web/src/bridge-request-manager.js';
 
-test('desktop access shows a working navigation/refresh flow instead of three disabled choices; headless choices stay gated', async () => {
+test('desktop access is read-only with refresh and no navigation; headless choices stay gated', async () => {
   const keys = ['window', 'document', 'IS_REACT_ACT_ENVIRONMENT'] as const;
   const saved = keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const);
   const { window, document } = parseHTML('<html><body><div id="root"></div></body></html>');
@@ -16,13 +16,12 @@ test('desktop access shows a working navigation/refresh flow instead of three di
   }
   const root = createRoot(document.getElementById('root')!);
   const calls: string[] = [];
-  let fail = false;
   const config = { mode: 'ask' as const, editable: false, networkAccess: true, allowFullAccess: true, canOpenOnDesktop: true };
   const render = (editable = false, busy = false, newSession = false, persisted = false) => act(async () => root.render(createElement(PermissionModeControl, {
     newSession,
     config: { ...config, editable, allowFullAccess: !editable, ...(persisted ? { source: 'persisted' as const, canOpenOnDesktop: false } : {}) }, loading: false, disabled: busy,
     onRefresh: async () => { calls.push('refresh'); },
-    onOpenDesktop: async () => { if (fail) throw new Error('desktop_thread_open_failed'); calls.push('open'); },
+    onOpenDesktop: async () => { calls.push('open'); },
     onChange: async (mode) => { calls.push(mode); },
   })));
   const click = async (selector: string) => act(async () => {
@@ -35,11 +34,9 @@ test('desktop access shows a working navigation/refresh flow instead of three di
     assert.match(document.body.textContent!, /权限由 Codex 电脑端管理/);
     assert.deepEqual(calls, ['refresh']);
     await click('.permission-mode-desktop button');
-    assert.match(document.querySelector('[role=status]')!.textContent!, /已在电脑端打开/);
-    assert.deepEqual(calls, ['refresh', 'open']);
-    fail = true;
-    await click('.permission-mode-desktop button');
-    assert.match(document.querySelector('[role=alert]')!.textContent!, /未能在电脑端打开/);
+    assert.equal(document.querySelectorAll('.permission-mode-desktop button').length, 1);
+    assert.doesNotMatch(document.body.textContent!, /在电脑端打开/);
+    assert.deepEqual(calls, ['refresh', 'refresh']);
     await render(true);
     await click('.permission-mode-summary');
     const choices = document.querySelectorAll<HTMLButtonElement>('.permission-mode-options button');

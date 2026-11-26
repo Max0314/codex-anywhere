@@ -228,6 +228,11 @@ export class CodexAppServer extends EventEmitter {
     }
   }
 
+  async readAccountLimits() {
+    await this.ensureStarted();
+    return this.rpcRaw('account/rateLimits/read', {}, 10000);
+  }
+
   async listSessions(options: { cwd?: string } = {}) {
     const cwd = options.cwd ? resolveAllowedWorkspace(this.allowedRoots, options.cwd) : '';
     const pending = this.sessionListReads.get(cwd);

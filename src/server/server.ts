@@ -21,7 +21,7 @@ import {
   requireCurrentProtocol,
   type CurrentProtocol,
 } from '../shared/protocol-contract.js';
-import { OwnerAccess, type OwnerLease } from './owner-access.js';
+import { OwnerAccess, ownerAuthorizationCloseCode, type OwnerLease } from './owner-access.js';
 import { DeviceRegistry } from './device-registry.js';
 import { ACTIVITY_INTERVAL_MS, DeviceActivity, deviceActivityPath } from './device-activity.js';
 import { currentWebSocketSource, handleHttpRequest, normalizeUiLanguage } from './http.js';
@@ -199,7 +199,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
           }
           return;
         }
-        if (owner && (!leases.has(socket) || !owner.valid(leases.get(socket)!))) { socket.close(4403, 'authorization expired'); return; }
+        if (owner && (!leases.has(socket) || !owner.valid(leases.get(socket)!))) { socket.close(1013, 'authorization verification pending'); return; }
         deviceActivity.seen(socket);
         if (owner && leases.get(socket)?.legacy) return;
         if (owner && message.type === 'relay.release.grant' && meta.role === 'connector') {
@@ -231,7 +231,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
         }
       } catch (error) {
         safeSend(socket, { type: 'error', error: publicError(error) });
-        if (!socketMeta.has(socket)) socket.close(4403, 'authorization required');
+        if (!socketMeta.has(socket)) socket.close(owner ? ownerAuthorizationCloseCode(error) : 4403, 'authorization required');
       }
     });
 
@@ -243,6 +243,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
       const meta = socketMeta.get(socket);
       if (!meta) return;
       if (meta.role === 'client') {
+        if (clients.get(meta.id) !== socket) return;
         clients.delete(meta.id);
         for (const connector of connectors.values()) {
           safeSend(connector, { type: 'client.disconnected', clientId: meta.id });
@@ -258,7 +259,15 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
 
   owner && (owner.onRevoke = (role, id) => { for (const [socket, lease] of leases) if (lease.device.role === role && lease.device.id === id) socket.close(4403, 'device revoked'); });
   const renewals = new Set<AliveWebSocket>();
-  const renewalTimer = setInterval(() => { if (!owner) return; for (const [socket, lease] of leases) { if (renewals.has(socket) || Date.now() + 1000 < lease.expires) continue; renewals.add(socket); void owner.renew(lease).catch(() => socket.close(4403, 'authorization expired')).finally(() => renewals.delete(socket)); } }, 1000);
+  const renewalTimer = setInterval(() => {
+    if (!owner) return;
+    for (const [socket, lease] of leases) {
+      const ahead = lease.sessionHash ? 3000 : 10000;
+      if (renewals.has(socket) || Date.now() + ahead < lease.expires) continue;
+      renewals.add(socket);
+      void owner.renew(lease).catch(error => socket.close(ownerAuthorizationCloseCode(error), 'authorization verification failed')).finally(() => renewals.delete(socket));
+    }
+  }, 1000);
   renewalTimer.unref();
   const heartbeat = setInterval(() => {
     for (const rawSocket of webSocketServer.clients) {

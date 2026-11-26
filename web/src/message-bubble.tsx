@@ -19,6 +19,7 @@ import { MessageMarkdown } from './message-markdown';
 import { QuestionReplyContent } from './question-reply-content';
 import { AgentInstructionsCard } from './agent-instructions-card';
 import { parseAgentInstructions } from '../../src/shared/agent-instructions';
+import { hiddenInternalContext } from './internal-context';
 import { elapsedLabel } from './live-activity';
 import { t } from './i18n';
 import type { TimelineItem } from './history-utils';
@@ -537,6 +538,7 @@ function MessageBubbleComponent({
     setTurnDiffPreview(null);
   }
 
+  if (hiddenInternalContext(item)) return null;
   if (item.kind === 'system' && (item.compaction || item.compactionProgress)) return <ContextCompactionMarker item={item} />;
   if (item.kind === 'system' && item.notice) return <TimelineNoticeMarker item={item} />;
   if (item.kind === 'progress' && !item.attachment && !item.visualization) {
@@ -557,7 +559,7 @@ function MessageBubbleComponent({
           replies={item.questionReplies}
           onReadTextFile={onReadTextFile}
           onDownloadFile={openLocalFile}
-        /> : item.kind === 'user' && /^<codex_internal_context\s+source="goal">[\s\S]*<\/codex_internal_context>$/.test(item.text.trim()) ? <details className="internal-context"><summary>上下文（展开原文）</summary><pre>{item.text}</pre></details> : instructions ? <AgentInstructionsCard instructions={instructions}
+        /> : instructions ? <AgentInstructionsCard instructions={instructions}
           onDownloadFile={openLocalFile} onReadTextFile={onReadTextFile} /> : <MessageMarkdown
           text={item.text}
           attachmentPath={item.attachment?.path}

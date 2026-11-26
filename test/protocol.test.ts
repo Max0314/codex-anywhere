@@ -595,7 +595,7 @@ test('run details expose a confirmed stop only for a connector-owned turn', () =
   }));
   assert.doesNotMatch(desktopOwned, />停止本次执行</);
   assert.match(desktopOwned, /请在 Codex 电脑端停止/);
-  assert.match(desktopOwned, /在电脑端打开会话/);
+  assert.doesNotMatch(desktopOwned, /在电脑端打开会话/);
 });
 
 test('steering is available only while the selected Web-owned turn is actively running', () => {

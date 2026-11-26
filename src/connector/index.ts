@@ -133,7 +133,7 @@ const ownerControl = process.env.BRIDGE_OWNER_MODE === '1' ? startOwnerControl(a
   const busy = codex.activeTurns.size > 0 || requestsInFlight > 0 || fileUploads.hasActiveTransfers() || [...downloads.sessions.values()].some(session => session.busy || !session.completed && session.expiresAt > Date.now());
   if (command === 'status') {
     const version = process.env.BRIDGE_INSTALL_VERSION || 'source';
-    return { busy, connected: connectorAuthenticated, maintenance, version };
+    return { busy, connected: connectorAuthenticated, maintenance, version, installRoot: process.env.BRIDGE_INSTALL_ROOT || null };
   }
   if (command === 'resume') { maintenance = false; return { maintenance }; }
   if (command === 'prepare') { maintenance = true; if (busy) throw Error('任务正在运行，请稍后更新。'); return { ready: true }; }

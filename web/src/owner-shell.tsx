@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { BrandIcon } from './brand-icon';
 
 function OwnerIcon({ name }: { name: "download" | "devices" | "account" | "system" | "light" | "dark" | "close" }) {
   const paths = {
@@ -16,8 +17,11 @@ function OwnerIcon({ name }: { name: "download" | "devices" | "account" | "syste
 
 export function OwnerShell({ children }: { children: ReactNode }) {
   const [access, setAccess] = useState<
-    "loading" | "ready" | "login" | "denied" | "error"
+    "loading" | "ready" | "login" | "denied" | "revoked" | "error"
   >("loading");
+  const accessRef = useRef(access);
+  const checks = useRef(0);
+  const deviceRequests = useRef(0);
   const [devices, setDevices] = useState<any[] | null>(null);
   const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -35,19 +39,21 @@ export function OwnerShell({ children }: { children: ReactNode }) {
     () => localStorage.getItem("bridge.theme") || "system",
   );
   async function check() {
+    const sequence = ++checks.current;
+    const apply = (next: typeof access) => {
+      if(sequence !== checks.current) return;
+      accessRef.current = next;
+      setAccess(next);
+      if(next !== 'ready'){ deviceRequests.current++; setDevices(null); setToolbarTarget(null); }
+    };
     try {
       const r = await fetch("/api/access", { cache: "no-store" });
-      setAccess(
-        r.ok
-          ? "ready"
-          : r.status === 401
-            ? "login"
-            : r.status === 403
-              ? "denied"
-              : "error",
-      );
+      if(r.ok) apply('ready');
+      else if(r.status === 401) apply('login');
+      else if(r.status === 403){ const detail = await r.json().catch(() => ({})); apply(detail.error === 'device_revoked' ? 'revoked' : 'denied'); }
+      else apply(accessRef.current === 'ready' ? 'ready' : 'error');
     } catch {
-      setAccess("error");
+      apply(accessRef.current === 'ready' ? 'ready' : 'error');
     }
   }
   useEffect(() => {
@@ -67,6 +73,8 @@ export function OwnerShell({ children }: { children: ReactNode }) {
       const dark = theme === "dark" || (theme === "system" && media.matches);
       document.documentElement.dataset.theme = dark ? "dark" : "light";
       document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', dark ? 'dark' : 'light');
+      document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.setAttribute('content', dark ? 'black-translucent' : 'default');
       document
         .querySelector('meta[name="theme-color"]')
         ?.setAttribute("content", dark ? "#212121" : "#ffffff");
@@ -76,8 +84,13 @@ export function OwnerShell({ children }: { children: ReactNode }) {
     return () => media.removeEventListener("change", apply);
   }, [theme]);
   async function listDevices() {
+    const sequence = ++deviceRequests.current;
+    if(accessRef.current !== 'ready') return;
     const response = await fetch("/api/devices", { cache: "no-store" });
-    if (response.ok) setDevices(await response.json());
+    if (response.ok) {
+      const result = await response.json();
+      if(sequence === deviceRequests.current && accessRef.current === 'ready') setDevices(result);
+    }
   }
   async function revoke(role: string, id: string) {
     if (!confirm("撤销此设备的访问权限？")) return;
@@ -98,13 +111,15 @@ export function OwnerShell({ children }: { children: ReactNode }) {
       ) : (
         <main className="login-shell">
           <section className="login-card owner-login-card">
-            <div className="owner-login-mark" aria-hidden="true">&gt;_</div>
+            <div className="owner-login-mark" aria-hidden="true"><BrandIcon /></div>
             <h1>Codex Anywhere</h1>
             <p>
               {access === "loading"
                 ? "正在识别登录状态…"
                 : access === "denied"
                   ? "此账号无权访问，请切换 Fribench 账号。"
+                  : access === "revoked"
+                    ? "此浏览器的访问权限已被撤销，请使用已授权设备检查设备管理。"
                   : access === "error"
                     ? "登录服务暂时不可用，请重试。"
                     : "登录 Fribench，连接你的电脑。"}
@@ -137,7 +152,7 @@ export function OwnerShell({ children }: { children: ReactNode }) {
           </nav>,
           toolbarTarget,
         )}
-      {devices && (
+      {access === 'ready' && devices && (
         <div className="owner-dialog-backdrop" onClick={() => setDevices(null)}>
           <section className="owner-device-dialog" role="dialog" aria-modal="true" aria-labelledby="owner-devices-title" onClick={(event) => event.stopPropagation()}>
             <header><div><h2 id="owner-devices-title">已连接的设备</h2><p>管理电脑和浏览器的访问权限</p></div><button aria-label="关闭" onClick={() => setDevices(null)}><OwnerIcon name="close" /></button></header>

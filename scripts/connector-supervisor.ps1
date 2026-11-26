@@ -14,11 +14,25 @@ if($pointer.pending){
         Start-Sleep -Seconds 1
         $process.Refresh()
         if($process.HasExited){break}
-        $status = & (Join-Path $appRoot 'runtime/node.exe') (Join-Path $appRoot 'build/connector/owner-status.js') 2>$null
-        if($LASTEXITCODE -eq 0){
-            $observed=$status | ConvertFrom-Json
+        $info = New-Object Diagnostics.ProcessStartInfo
+        $info.FileName = Join-Path $appRoot 'runtime/node.exe'
+        $info.Arguments = '"'+(Join-Path $appRoot 'build/connector/owner-status.js')+'"'
+        $info.UseShellExecute = $false
+        $info.CreateNoWindow = $true
+        $info.RedirectStandardOutput = $true
+        $info.RedirectStandardError = $true
+        $info.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+        $info.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+        $probe = [Diagnostics.Process]::Start($info)
+        $status = $probe.StandardOutput.ReadToEndAsync()
+        $errors = $probe.StandardError.ReadToEndAsync()
+        $probe.WaitForExit()
+        $code = $probe.ExitCode
+        $probe.Dispose()
+        if($code -eq 0){
+            $observed=$status.Result | ConvertFrom-Json
             $expected=Get-Content -LiteralPath (Join-Path $appRoot 'connector-release.json') -Raw | ConvertFrom-Json
-            if($observed.version -eq $expected.version){$healthy=$true;break}
+            if($observed.version -eq $expected.version -and ($observed.installRoot -eq $appRoot -or ([int]$expected.releaseSeq -lt 3 -and -not $observed.installRoot))){$healthy=$true;break}
         }
     }
     if($healthy){
