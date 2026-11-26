@@ -5,6 +5,27 @@ import { historyItems, mergeHistorySnapshot, prependHistoryPage } from '../web/s
 import type { HistoryPage } from '../web/src/app-types.js';
 import type { BridgeRequest } from '../web/src/bridge-request-manager.js';
 
+test('conversation publication does not wait for a stalled live request', async () => {
+  let resolveLive!: (value: HistoryPage) => void;
+  let published = false;
+  const request = (async (_action: string, payload: any) => payload.mode === 'conversation' ? { turns: [], nextCursor: 'older' } : new Promise<HistoryPage>(resolve => { resolveLive = resolve; })) as BridgeRequest;
+  const loading = loadHistoryPage(request, 'thread', null, 6, result => { published = true; assert.equal(result.page.nextCursor, 'older'); });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(published, true);
+  resolveLive({ turns: [], nextCursor: null });
+  await loading;
+});
+
+test('a failed conversation read retains a successful live tail', async () => {
+  const request = (async (_action: string, payload: any) => {
+    if (payload.mode === 'conversation') throw Error('history_timeout');
+    return { turns: [{ id: 't', items: [{ type: 'agentMessage', text: 'Available progress' }] }], nextCursor: null };
+  }) as BridgeRequest;
+  const loaded = await loadHistoryPage(request, 'thread', null, 6);
+  assert.equal(loaded.historyFailed, true);
+  assert.equal(loaded.items[0].text, 'Available progress');
+});
+
 const summary: HistoryPage = {
   nextCursor: 'older', turns: [
     { id: 'latest', status: 'completed', items: [

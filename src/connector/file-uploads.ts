@@ -17,7 +17,7 @@ type Upload = {
 type Payload = Record<string, unknown>;
 
 export class FileUploadManager {
-  hasActiveTransfers() { return [...this.uploads.values()].some(upload => upload.busy || !upload.snapshot && this.now() - upload.touchedAt < UPLOAD_TTL_MS); }
+  hasActiveTransfers() { return [...this.uploads.values()].some(upload => upload.busy || this.now() - upload.touchedAt < UPLOAD_TTL_MS); }
   private readonly uploads = new Map<string, Upload>();
   readonly directory: string;
   constructor(options: { directory?: string; now?: () => number } = {}) {

@@ -146,8 +146,15 @@ async function update() {
       ],
       { windowsHide: true, stdio: "ignore" },
     );
-    await new Promise((resolveExit) => restore.on("exit", resolveExit));
-    throw Error("新版未通过启动检查，已恢复原版本启动配置。");
+    const restored = await new Promise((resolveExit) => restore.on("exit", resolveExit));
+    if (restored === 0) {
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const status = await ownerCommand("status").catch(() => null);
+        if (status?.version === installed.version) throw Error("新版未通过启动检查，已恢复原版本。");
+        await new Promise(resolveDelay => setTimeout(resolveDelay, 1000));
+      }
+    }
+    throw Error("新版未通过启动检查，恢复尚未确认，请从开始菜单打开客户端检查。");
   }
   console.log("更新已安装");
 }

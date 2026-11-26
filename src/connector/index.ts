@@ -130,7 +130,7 @@ let releaseRequest: { id: string; resolve: (value: unknown) => void; reject: (er
 const ownerControl = process.env.BRIDGE_OWNER_MODE === '1' ? startOwnerControl(async command => {
   // Native Desktop tasks own a separate process and continue across observer
   // updates. Connector-owned turns and file transfers must drain first.
-  const busy = codex.activeTurns.size > 0 || requestsInFlight > 0 || fileUploads.hasActiveTransfers() || [...downloads.sessions.values()].some(session => !session.completed || session.busy);
+  const busy = codex.activeTurns.size > 0 || requestsInFlight > 0 || fileUploads.hasActiveTransfers() || [...downloads.sessions.values()].some(session => session.busy || !session.completed && session.expiresAt > Date.now());
   if (command === 'status') {
     const version = process.env.BRIDGE_INSTALL_VERSION || 'source';
     return { busy, connected: connectorAuthenticated, maintenance, version };
