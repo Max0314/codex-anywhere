@@ -14,7 +14,7 @@ import { acquireConnectorInstanceLock } from './instance-lock.js';
 import { loadOrCreateConnectorDeviceIdentity } from './device-identity.js';
 import { createRequestHandler } from './request-handler.js';
 import { monitorConnectorSocket, scheduleReferencedRetry } from './reconnect.js';
-import { ConnectorSecureChannels } from './secure-channels.js';
+import { changesConnectorState, ConnectorSecureChannels } from './secure-channels.js';
 import { connectorSessionModelSettingsPath, connectorDesktopMessageModelSettingsPath } from './session-model-settings.js';
 import { createConnectorAuthProof } from '../shared/auth.js';
 import { createDeviceAuthProof } from '../shared/device-auth.js';
@@ -61,7 +61,7 @@ const desktop = mode === 'desktop' ? new CodexDesktopClient({
   messageModelSettingsPath: connectorDesktopMessageModelSettingsPath(deviceId),
 }) : null;
 const downloads = new DownloadManager({
-  allowedRoots: [...allowedRoots, generatedImagesDirectory(), visualizationsDirectory(), UPLOAD_DIRECTORY],
+  allowedRoots: [...(allowedRoots || []), generatedImagesDirectory(), visualizationsDirectory(), UPLOAD_DIRECTORY],
   allowAnyFileDownload,
 });
 // Opt in per environment; no MCP listener or configuration change on stable installs.
@@ -95,20 +95,21 @@ const secureChannels = new ConnectorSecureChannels({
   deviceId,
   send: (frame) => safeSend(socket, frame),
   handleRequest: async request => {
-    if (maintenance && /^(turn\.(start|steer|edit)|file\.(upload\.begin|download\.open))$/.test(request.action)) {
+    const writing = changesConnectorState(request.action);
+    if (maintenance && writing) {
       return { type: 'response', clientId: request.clientId, requestId: request.requestId, ok: false, error: 'connector_update_waiting' };
     }
     if (request.action === 'session.subscribe') {
       const accepted = secureChannels.select(request.clientId || '', String(request.payload?.threadId || ''), Number(request.payload?.selectionEpoch || 0));
       return { type: 'response', clientId: request.clientId, requestId: request.requestId, ok: true, data: { accepted } };
     }
-    requestsInFlight++;
-    try { return await handleRequest(request); } finally { requestsInFlight--; }
+    if (writing) requestsInFlight++;
+    try { return await handleRequest(request); } finally { if (writing) requestsInFlight--; }
   },
 });
 let policyText = '';
 secureChannels.beforeRequest = () => {
-  if (!process.env.BRIDGE_CONFIG_FILE) return;
+  if (allowedRoots === null || !process.env.BRIDGE_CONFIG_FILE) return;
   const text = readFileSync(process.env.BRIDGE_CONFIG_FILE, 'utf8').replace(/^\uFEFF/, '');
   if (text === policyText) return;
   const config = JSON.parse(text);
@@ -125,18 +126,30 @@ let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let stopped = false;
 let connectorAuthenticated = false;
+let needsLogin = false;
 let maintenance = false;
 let releaseRequest: { id: string; resolve: (value: unknown) => void; reject: (error: Error) => void } | null = null;
 const ownerControl = process.env.BRIDGE_OWNER_MODE === '1' ? startOwnerControl(async command => {
   // Native Desktop tasks own a separate process and continue across observer
   // updates. Connector-owned turns and file transfers must drain first.
   const busy = codex.activeTurns.size > 0 || requestsInFlight > 0 || fileUploads.hasActiveTransfers() || [...downloads.sessions.values()].some(session => session.busy || !session.completed && session.expiresAt > Date.now());
-  if (command === 'status') {
+  if (command === 'reconnect') {
+    if (!connectorAuthenticated) {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
+      reconnectAttempt = 0;
+      if (socket) socket.terminate(); else connect();
+    }
+    return {};
+  }
+  if (command === 'status' || command === 'display-status') {
     const version = process.env.BRIDGE_INSTALL_VERSION || 'source';
-    return { busy, connected: connectorAuthenticated, maintenance, version, installRoot: process.env.BRIDGE_INSTALL_ROOT || null };
+    const desktopReady = command === 'display-status' && connectorAuthenticated
+      ? (await desktop?.getCapabilities())?.inputAvailable === true : undefined;
+    return { busy, connected: connectorAuthenticated, needsLogin, desktopReady, maintenance, version, installRoot: process.env.BRIDGE_INSTALL_ROOT || null };
   }
   if (command === 'resume') { maintenance = false; return { maintenance }; }
-  if (command === 'prepare') { maintenance = true; if (busy) throw Error('任务正在运行，请稍后更新。'); return { ready: true }; }
+  if (command === 'prepare') { if (busy) throw Error('任务正在运行，请稍后更新。'); maintenance = true; return { ready: true }; }
   if (command === 'stop') { if (!maintenance || busy) throw Error('任务正在运行，请稍后更新。'); setTimeout(() => void shutdown(), 100); return { stopping: true }; }
   if (command === 'release') {
     if (releaseRequest || socket?.readyState !== WebSocket.OPEN) throw Error('请先连接 Fribench');
@@ -213,6 +226,7 @@ function connect() {
       return;
     }
     if (message.type === 'auth.ok') {
+      needsLogin = false;
       connectorAuthenticated = true;
       reconnectAttempt = 0;
       return;
@@ -222,6 +236,7 @@ function connect() {
   current.on('close', (code, reason) => {
     if (socket !== current) return;
     if (code === 4409) console.error(`Connector route rejected (${deviceId}): ${reason.toString()}. Use a unique device ID and approve its registration.`);
+    if ([4401, 4403, 4407].includes(code)) needsLogin = true;
     socket = undefined;
     connectorAuthenticated = false;
     scheduleReconnect();

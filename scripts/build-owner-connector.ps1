@@ -3,8 +3,8 @@ param(
     [Parameter(Mandatory)][string]$OutputDirectory,
     [Parameter(Mandatory)][string]$ReleasePublicKey,
     [Parameter(Mandatory)][string]$MakeNsis,
-    [string]$Version='0.5.0-fribench.3',
-    [int]$ReleaseSequence=3,
+    [string]$Version='0.5.0-fribench.4',
+    [int]$ReleaseSequence=4,
     [string]$SignTool,
     [string]$SigningCertificateThumbprint,
     [string]$TimestampUrl='http://timestamp.digicert.com'

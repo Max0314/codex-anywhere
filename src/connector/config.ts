@@ -9,7 +9,7 @@ export type ConnectorConfig = {
   deviceLabel: string;
   mode: 'desktop' | 'headless';
   codexBin: string;
-  allowedRoots: string[];
+  allowedRoots: string[] | null;
   networkAccess: boolean;
   allowFullAccess: boolean;
   allowAnyFileDownload: boolean;
@@ -48,9 +48,9 @@ export function loadConnectorConfig(
     mode: configuredMode === 'desktop' || configuredMode === 'headless'
       ? configuredMode : platform === 'win32' ? 'desktop' : 'headless',
     codexBin: String(environment.CODEX_BIN || 'codex').trim() || 'codex',
-    allowedRoots: environment.CODEX_ALLOWED_ROOTS_JSON !== undefined ? JSON.parse(environment.CODEX_ALLOWED_ROOTS_JSON) : configuredAllowedRoots.length ? configuredAllowedRoots : [workingDirectory],
+    allowedRoots: environment.BRIDGE_OWNER_MODE === '1' ? null : environment.CODEX_ALLOWED_ROOTS_JSON !== undefined ? JSON.parse(environment.CODEX_ALLOWED_ROOTS_JSON) : configuredAllowedRoots.length ? configuredAllowedRoots : [workingDirectory],
     networkAccess: environment.CODEX_NETWORK_ACCESS === '1',
     allowFullAccess: environment.CODEX_ALLOW_FULL_ACCESS === '1',
-    allowAnyFileDownload: environment.CODEX_ALLOW_ANY_FILE_DOWNLOAD === '1',
+    allowAnyFileDownload: environment.BRIDGE_OWNER_MODE === '1' || environment.CODEX_ALLOW_ANY_FILE_DOWNLOAD === '1',
   };
 }

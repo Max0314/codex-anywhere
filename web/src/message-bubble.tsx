@@ -6,7 +6,7 @@ import {
   useState,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { formatDate } from './app-utils';
+import { formatDate, friendlyError } from './app-utils';
 import {
   localTextPreviewInfo,
   localFileName,
@@ -349,8 +349,8 @@ function MessageBubbleComponent({
   item,
   active = false,
   imageSource,
-  onDownloadFile,
-  onSaveImage,
+  onDownloadFile: download,
+  onSaveImage: saveImage,
   onReadTextFile,
   onReadTurnDiff,
   onReadVisualization,
@@ -362,6 +362,20 @@ function MessageBubbleComponent({
   const [visualizationSource, setVisualizationSource] = useState('');
   const [visualizationStatus, setVisualizationStatus] = useState<'idle' | 'loading' | 'failed'>('idle');
   const [filePreview, setFilePreview] = useState<FilePreviewState | null>(null);
+  const [transferError, setTransferError] = useState<{ path: string; image: boolean; message: string } | null>(null);
+  const transfer = useCallback(async (path: string, image: boolean) => {
+    setTransferError(null);
+    try {
+      await (image ? saveImage : download)?.(path);
+    } catch (error) {
+      setImageExpanded(false);
+      setFilePreview(null);
+      setTransferError({ path, image, message: friendlyError(error) });
+    }
+  }, [download, saveImage]);
+  const onDownloadFile = useCallback((path: string) => void transfer(path, false), [transfer]);
+  const save = useCallback((path: string) => void transfer(path, true), [transfer]);
+  const onSaveImage = saveImage ? save : undefined;
   const [filePreviewHistory, setFilePreviewHistory] = useState<FilePreviewState[]>([]);
   const [turnDiffPreview, setTurnDiffPreview] = useState<TurnDiffPreviewState | null>(null);
   const visualizationHistoryEntry = useRef(false);
@@ -540,6 +554,11 @@ function MessageBubbleComponent({
     setTurnDiffPreview(null);
   }
 
+  const transferNotice = transferError && <div className="attachment-transfer-error" role="status">
+          <span>{localFileName(transferError.path)} · {transferError.message}</span>
+          <button type="button" onClick={() => void transfer(transferError.path, transferError.image)}>{t('重试', 'Retry')}</button>
+          <button type="button" onClick={() => setTransferError(null)} aria-label={t('关闭提示', 'Dismiss')}>×</button>
+        </div>;
   if (hiddenInternalContext(item)) return null;
   if (item.kind === 'system' && (item.compaction || item.compactionProgress)) return <ContextCompactionMarker item={item} />;
   if (item.kind === 'system' && item.notice) return <TimelineNoticeMarker item={item} />;
@@ -550,6 +569,7 @@ function MessageBubbleComponent({
         <div className="progress-markdown">
           <MessageMarkdown text={item.text} onReadTextFile={onReadTextFile} onDownloadFile={onDownloadFile} />
         </div>
+        {transferNotice}
       </details>
     );
   }
@@ -600,6 +620,7 @@ function MessageBubbleComponent({
             </figcaption>
           </figure>
         )}
+        {transferNotice}
         {item.visualization && (
           <section className="visualization-card" aria-label={t('交互可视化', 'Interactive visualization')}>
             <div className="visualization-card-icon" aria-hidden="true">

@@ -1,3 +1,4 @@
+import { ownerCommand } from "./owner-control.js";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -64,12 +65,13 @@ const server = createServer(async (request, response) => {
       "cache-control": "no-store",
     });
     response.end("电脑已连接，可以关闭此页面。");
+    void ownerCommand("reconnect").catch(() => {});
     console.log("BOUND");
     server.close();
     clearTimeout(timer);
   } catch {
-    response.writeHead(503);
-    response.end("Binding failed. Please try again from the connector.");
+    response.writeHead(503, { "content-type": "text/plain; charset=utf-8" });
+    response.end("连接未完成。请回到电脑客户端重新登录。");
     server.close();
     clearTimeout(timer);
     process.exitCode = 1;

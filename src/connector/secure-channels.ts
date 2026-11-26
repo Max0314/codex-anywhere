@@ -31,6 +31,10 @@ const DEDUPLICATED_ACTIONS = new Set([
   'turn.edit', 'turn.start', 'turn.steer', 'turn.stop', 'approval.respond',
 ]);
 
+export function changesConnectorState(action: string) {
+  return DEDUPLICATED_ACTIONS.has(action);
+}
+
 export class ConnectorSecureChannels {
   beforeRequest: () => void = () => {};
   invalidateResults() { this.requestResults.clearCompleted(); }

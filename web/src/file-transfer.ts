@@ -16,7 +16,6 @@ type WakeLockNavigator = Navigator & {
 type FileTransferOptions = {
   online: boolean;
   request: BridgeRequest;
-  reportTimelineError: (error: unknown) => void;
   environmentIdRef: RefObject<string>;
   selectedRequestRef: RefObject<number>;
   connectorOnlineRef: RefObject<boolean>;
@@ -24,7 +23,7 @@ type FileTransferOptions = {
 };
 
 export function useFileTransfer({
-  online, request, reportTimelineError, environmentIdRef, selectedRequestRef, connectorOnlineRef, secureChannelRef,
+  online, request, environmentIdRef, selectedRequestRef, connectorOnlineRef, secureChannelRef,
 }: FileTransferOptions) {
   const [fileDownload, setFileDownload] = useState<FileDownloadState | null>(null);
   const [imageToSave, setImageToSave] = useState<File | null>(null);
@@ -97,17 +96,10 @@ export function useFileTransfer({
     if (fileDownloadRef.current) return;
     const sourceEnvironmentId = environmentIdRef.current;
     const selectionVersion = selectedRequestRef.current;
-    const wakeLockSupported = Boolean((navigator as WakeLockNavigator).wakeLock?.request);
     const sourceName = environmentShortName(environmentIdRef.current);
-    const accepted = window.confirm(
-      t(
-        destination === 'image' ? `从${sourceName}读取这张原图？\n\n${path}\n\n读取完成后，可以保存到相册、分享或下载。请保持本页打开。`
-          : `是否从${sourceName}下载以下文件？\n\n${path}\n\n${wakeLockSupported ? '下载期间会保持屏幕常亮。若手动息屏或切到后台，下载会安全暂停，回到本页后自动续传。' : '当前浏览器无法保证后台下载，请保持屏幕亮起；若息屏中断，回到本页后会自动续传。'}`,
-        destination === 'image' ? `Read the original image from ${sourceName}?\n\n${path}\n\nYou can then save it to Photos, share it or download it. Keep this page open.`
-          : `Download this file from ${sourceName}?\n\n${path}\n\n${wakeLockSupported ? 'The screen will stay awake during the download. If you lock it or leave the page, the transfer pauses safely and resumes when you return.' : 'This browser cannot guarantee background downloads. Keep the screen awake; if interrupted, the transfer resumes when you return.'}`,
-      ),
-    );
-    if (!accepted) return;
+    if (destination === 'download' && !window.confirm(t(
+      `从${sourceName}下载 ${localFileName(path)}？`, `Download ${localFileName(path)} from ${sourceName}?`,
+    ))) return;
     setImageToSave(null);
     fileDownloadRef.current = true;
     fileDownloadCancelRef.current = false;
@@ -228,7 +220,8 @@ export function useFileTransfer({
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (error) {
       if (!(error instanceof Error && error.message === 'download_cancelled')) {
-        reportTimelineError(error);
+        if (!abortController.signal.aborted && environmentIdRef.current === sourceEnvironmentId
+          && selectedRequestRef.current === selectionVersion) throw error;
       }
     } finally {
       const ownsDownload = fileDownloadAbortRef.current === abortController;
@@ -246,7 +239,7 @@ export function useFileTransfer({
         await releaseDownloadWakeLock();
       }
     }
-  }, [acquireDownloadWakeLock, online, releaseDownloadWakeLock, reportTimelineError, request]);
+  }, [acquireDownloadWakeLock, online, releaseDownloadWakeLock, request]);
 
   const downloadLocalFile = useCallback((path: string) => transferLocalFile(path, 'download'), [transferLocalFile]);
   const saveLocalImage = useCallback((path: string) => transferLocalFile(path, 'image'), [transferLocalFile]);

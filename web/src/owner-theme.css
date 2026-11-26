@@ -690,3 +690,12 @@ html[data-theme] .brand-mark { background: var(--ui-text); color: var(--ui-bg); 
 .image-save-actions .image-save-primary { background: var(--ui-text, #eee); color: var(--ui-bg, #212121); border-color: transparent; }
 .image-save-actions button:disabled { opacity: .6; }
 .image-lightbox-save { position: absolute; top: max(20px, env(safe-area-inset-top)); left: 20px; min-height: 44px; padding: 10px 16px; border: 1px solid #fff5; border-radius: 12px; color: #fff; background: #202020cc; font-size: 14px; }
+
+.attachment-transfer-error, .thread-family, .follow-up-draft { font-size: .85rem; color: var(--ui-text, currentColor); }
+.attachment-transfer-error { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; padding:.5rem 0; }
+.attachment-transfer-error button, .thread-family button { background:transparent; color:var(--ui-link, #537fc4); border:0; cursor:pointer; }
+.thread-family { padding:.35rem 1rem; max-height:22vh; overflow:auto; }
+.thread-family button { display:block; padding:.4rem; text-align:left; }
+.thread-family summary { cursor:pointer; }
+.follow-up-draft { display:block; width:100%; padding:.5rem .8rem; text-align:left; background:transparent; border:0; cursor:pointer; }
+.follow-up-draft span { color:var(--ui-link, #537fc4); margin-right:.6rem; }

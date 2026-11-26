@@ -14,10 +14,14 @@ document.getElementById("approve").addEventListener("click", async function () {
       },
     );
     const result = await response.json();
-    if (!response.ok) throw Error();
+    if (response.status === 401) {
+      location.assign("/_fribench/auth/login?return_to=" + encodeURIComponent(location.pathname + location.search));
+      return;
+    }
+    if (!response.ok) throw Error(result.error || "unavailable");
     location.assign(result.redirect);
-  } catch {
-    status.textContent = "连接未完成，请从电脑客户端重新发起。";
+  } catch (error) {
+    status.textContent = error.message === "intent_expired" ? "本次连接已过期，请回到电脑客户端重新登录。" : "连接暂未完成，请重试。";
     this.disabled = false;
   }
 });

@@ -7,7 +7,15 @@ $versionsBase = [IO.Path]::GetFullPath((Join-Path $installBase 'versions')) + [I
 if(-not $appRoot.StartsWith($versionsBase,[StringComparison]::OrdinalIgnoreCase)){throw 'Invalid installed version path'}
 $powershell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
 $settingsScript = Join-Path $appRoot 'scripts/connector-settings.ps1'
-$process = Start-Process -FilePath $powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$settingsScript+'"'),'-Background') -WindowStyle Hidden -PassThru
+function Start-Worker {
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $powershell
+    $info.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "'+$settingsScript+'" -Background'
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    return [Diagnostics.Process]::Start($info)
+}
+$process = Start-Worker
 if($pointer.pending){
     $healthy = $false
     for($attempt=0;$attempt -lt 30;$attempt++){
@@ -52,5 +60,13 @@ if($pointer.pending){
         exit $LASTEXITCODE
     }
 }
-$process.WaitForExit()
-exit $process.ExitCode
+while($true) {
+    $process.WaitForExit()
+    $exitCode = $process.ExitCode
+    $process.Dispose()
+    if($exitCode -eq 0){ exit 0 }
+    Start-Sleep -Seconds 3
+    $active = Get-Content -LiteralPath $pointerPath -Raw | ConvertFrom-Json
+    if($active.current -ne $appRoot){ exit 0 }
+    $process = Start-Worker
+}

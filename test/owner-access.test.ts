@@ -127,6 +127,7 @@ test("owner registration deduplicates concurrent sockets and revocation blocks H
 test("PC intent binds PKCE and device signature, rejects conflicting identity and reuses exact finish", async () => {
   const directory = mkdtempSync(join(tmpdir(), "anywhere-bind-"));
   const ownerSub = "11111111-1111-4111-8111-111111111111";
+  let approvalAttempts = 0;
   const provider = createServer((request, response) => {
     response.setHeader("content-type", "application/json");
     if (request.url === "/internal/identity")
@@ -134,13 +135,18 @@ test("PC intent binds PKCE and device signature, rejects conflicting identity an
     else if (request.url === "/_fribench/auth/session") {
       assert.equal(request.method, "GET");
       response.end(JSON.stringify({ csrf: "provider-csrf" }));
-    } else if (request.url === "/_fribench/desktop/approve")
+    } else if (request.url === "/_fribench/desktop/approve") {
+      if (++approvalAttempts === 1) {
+        response.writeHead(503);
+        response.end("{}");
+        return;
+      }
       response.end(
         JSON.stringify({
           redirect: "http://127.0.0.1:12345/fribench/callback?code=one",
         }),
       );
-    else
+    } else
       response.end(
         JSON.stringify({ sub: ownerSub, security_version: "v1", active: true }),
       );
@@ -209,14 +215,12 @@ test("PC intent binds PKCE and device signature, rejects conflicting identity an
     const session = (await fetch(base + "/api/access", { headers }).then((r) =>
       r.json(),
     )) as any;
-    assert.equal(
-      (
-        await post("/api/pc/intents/" + intent.intentId + "/approve", {
-          csrf: session.csrf,
-        })
-      ).status,
-      200,
-    );
+    const approve = () => post("/api/pc/intents/" + intent.intentId + "/approve", { csrf: session.csrf });
+    assert.equal((await approve()).status, 503);
+    const approved = await approve();
+    assert.equal(approved.status, 200);
+    assert.deepEqual(await (await approve()).json(), await approved.json());
+    assert.equal(approvalAttempts, 2);
     const finish = {
       code: "one",
       verifier,

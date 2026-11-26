@@ -104,58 +104,17 @@ async function update() {
   mkdirSync(download, { recursive: true });
   const exe = join(download, "connector-" + metadata.version + ".exe");
   writeFileSync(exe, bytes);
-  try {
-    await ownerCommand("prepare");
-  } catch (error) {
-    await ownerCommand("resume").catch(() => {});
-    throw error;
-  }
-  await ownerCommand("stop");
-  await new Promise((resolveDelay) => setTimeout(resolveDelay, 1000));
   const child = spawn(exe, ["/S", "/D=" + destination], {
     windowsHide: true,
     stdio: "ignore",
   });
-  const code = await new Promise((resolveExit) =>
-    child.on("exit", resolveExit),
-  );
-  let healthy = false;
-  if (code === 0) {
-    for (let attempt = 0; attempt < 30; attempt++) {
-      const status = await ownerCommand("status").catch(() => null);
-      if (status?.version === metadata.version) {
-        healthy = true;
-        break;
-      }
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1000));
-    }
-  }
-  if (!healthy) {
-    const powershell = join(
-      process.env.SystemRoot!,
-      "System32/WindowsPowerShell/v1.0/powershell.exe",
-    );
-    const restore = spawn(
-      powershell,
-      [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        join(root, "scripts/install-owner-connector.ps1"),
-      ],
-      { windowsHide: true, stdio: "ignore" },
-    );
-    const restored = await new Promise((resolveExit) => restore.on("exit", resolveExit));
-    if (restored === 0) {
-      for (let attempt = 0; attempt < 30; attempt++) {
-        const status = await ownerCommand("status").catch(() => null);
-        if (status?.version === installed.version) throw Error("新版未通过启动检查，已恢复原版本。");
-        await new Promise(resolveDelay => setTimeout(resolveDelay, 1000));
-      }
-    }
-    throw Error("新版未通过启动检查，恢复尚未确认，请从开始菜单打开客户端检查。");
-  }
+  const code = await new Promise<number | null>((resolveExit, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolveExit);
+  });
+  if (code !== 0) throw Error("更新未完成。请在当前任务和文件传输结束后重试。");
+  const status = await ownerCommand("status");
+  if (status.version !== metadata.version) throw Error("新版尚未启动，请重新检查版本。");
   console.log("更新已安装");
 }
 async function exclusiveUpdate() {

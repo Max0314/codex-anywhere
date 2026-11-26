@@ -3,10 +3,11 @@ import {
   basename, dirname, isAbsolute, relative, resolve,
 } from 'node:path';
 
-export function resolveAllowedWorkspace(roots: string[] | string, candidate: unknown) {
+export function resolveAllowedWorkspace(roots: string[] | string | null, candidate: unknown) {
   const rawCandidate = String(candidate || '').trim();
   if (!rawCandidate) throw new Error('project_directory_required');
   const requested = canonicalizeWorkspaceCandidate(rawCandidate);
+  if (roots === null) return requested;
   const allowedRoots = (Array.isArray(roots) ? roots : [roots])
     .map((root) => String(root || '').trim())
     .filter(Boolean)
@@ -38,7 +39,7 @@ function canonicalizeWorkspaceCandidate(candidate: string) {
   }
 }
 
-export function isAllowedWorkspace(roots: string[] | string, candidate: unknown) {
+export function isAllowedWorkspace(roots: string[] | string | null, candidate: unknown) {
   try {
     resolveAllowedWorkspace(roots, candidate);
     return true;

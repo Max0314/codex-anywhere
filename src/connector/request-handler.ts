@@ -1,3 +1,4 @@
+import { readThreadFamily } from './thread-family.js';
 import { editIdentifier, editText } from './message-edit.js';
 import { publicError } from '../shared/protocol.js';
 import { measureOperation, operationMetrics } from './operation-metrics.js';
@@ -212,6 +213,7 @@ async function dispatchAction({
         ...(desktopState?.inputTransport ? { desktopInputTransport: desktopState.inputTransport } : {}) } : {}),
       activeTurn: codex.activeTurns.size > 0,
       capabilities: { sessionDelete: mode === 'headless', networkAccess, fullAccess: allowFullAccess,
+        ...(mode === 'desktop' && process.env.BRIDGE_OWNER_MODE === '1' ? { threadFamily: true } : {}),
         ...(mode === 'desktop' && desktopState?.inputAvailable ? {
           desktopNativeState: Boolean(desktop?.controls) && (desktopState.controlsAvailable ?? true),
           desktopNativeImages: (desktopState.imagesAvailable ?? true) && Boolean(attachments.nativeInput),
@@ -237,6 +239,9 @@ async function dispatchAction({
       ),
       desktopStatuses,
     };
+  }
+  if (action === 'session.family' && mode === 'desktop' && process.env.BRIDGE_OWNER_MODE === '1') {
+    return readThreadFamily(String(payload.threadId || ''));
   }
   if (action === 'session.read') return codex.readSession(String(payload.threadId || ''));
   if (action === 'session.archive') {

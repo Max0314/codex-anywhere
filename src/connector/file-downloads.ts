@@ -1,3 +1,4 @@
+import { ownerAttachmentPath } from './attachments.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { appendFile, mkdir, open, realpath, stat } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
@@ -95,7 +96,7 @@ export class DownloadManager {
     await this.#revokeClientSessions(owner, 'replaced');
 
     const requestedPath = resolveDownloadPath(payload?.path);
-    const path = await canonicalDownloadPath(requestedPath);
+    const path = await canonicalDownloadPath(await ownerAttachmentPath(requestedPath));
     if (!this.allowAnyFileDownload && !await pathAllowedByRoots(path, this.allowedRoots)) {
       throw new Error('download_path_not_allowed');
     }
@@ -180,7 +181,7 @@ export class DownloadManager {
   }
 
   async #readTextFile(requestedPath: string, errorPrefix: string) {
-    const path = await canonicalDownloadPath(requestedPath).catch((error) => {
+    const path = await canonicalDownloadPath(await ownerAttachmentPath(requestedPath)).catch((error) => {
       if (error instanceof Error && error.message === 'download_file_not_found') {
         throw new Error(`${errorPrefix}_not_found`);
       }

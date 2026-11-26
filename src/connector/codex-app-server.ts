@@ -69,7 +69,7 @@ type CodexAppServerOptions = {
   releaseRuntimeAfterTurn?: boolean;
   bin?: string;
   runtimeCwd?: string;
-  allowedRoots?: string[];
+  allowedRoots?: string[] | null;
   networkAccess?: boolean;
   allowFullAccess?: boolean;
   modelSettingsPath?: string;
@@ -124,7 +124,7 @@ const APPROVAL_METHODS = new Set([
 export class CodexAppServer extends EventEmitter {
   bin: string;
   runtimeCwd: string;
-  allowedRoots: string[];
+  allowedRoots: string[] | null;
   networkAccess: boolean;
   allowFullAccess: boolean;
   child: ChildProcessWithoutNullStreams | null;
@@ -157,7 +157,7 @@ export class CodexAppServer extends EventEmitter {
     const configuredRoots = Array.isArray(options.allowedRoots)
       ? options.allowedRoots.map((root) => String(root).trim()).filter(Boolean).map((root) => resolve(root))
       : [];
-    this.allowedRoots = Array.isArray(options.allowedRoots) ? configuredRoots : [this.runtimeCwd];
+    this.allowedRoots = options.allowedRoots === null ? null : Array.isArray(options.allowedRoots) ? configuredRoots : [this.runtimeCwd];
     this.networkAccess = options.networkAccess === true;
     this.allowFullAccess = options.allowFullAccess === true;
     this.child = null;
@@ -413,6 +413,14 @@ export class CodexAppServer extends EventEmitter {
     if (!metadata?.path && (!cursor || cursor.startsWith('rollout:v1:'))) {
       await this.listSessions();
       metadata = this.sessionMetadata.get(resolvedThreadId);
+      // Child threads are deliberately absent from the main session list.
+      if (!metadata?.path && this.allowedRoots === null) {
+        const { thread } = await this.rpcRaw('thread/read', { threadId: resolvedThreadId, includeTurns: false });
+        if (thread?.id === resolvedThreadId && thread.path && thread.cwd) {
+          metadata = { cwd: thread.cwd, path: thread.path, canAcceptDirectInput: thread.canAcceptDirectInput !== false };
+          this.sessionMetadata.set(resolvedThreadId, metadata);
+        }
+      }
     }
     if (!cursor && mode === 'live' && metadata?.path) {
       return this.readSessionTail(resolvedThreadId, metadata.path);

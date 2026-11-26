@@ -1,3 +1,5 @@
+import { ThreadFamily } from './thread-family';
+import { followUpDraft } from './follow-up-draft';
 import { MessageEditDialog, type MessageEditPlan } from './message-edit-dialog';
 import {
   KeyboardEvent,
@@ -261,6 +263,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
   const [olderHistoryAutoLoadEnabled, setOlderHistoryAutoLoadEnabled] = useState(false);
   const [initialHistoryLoaded, setInitialHistoryLoaded] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
   const [prompt, setPrompt] = useState('');
   const { attachment: pendingAttachment, setAttachment: setPendingAttachment, choose: prepareMessageAttachment, invalidate: invalidateMessageAttachment } = useAttachmentDraft();
   const [knownAttachments, setKnownAttachments] = useState<Record<string, KnownAttachment>>(loadKnownAttachments);
@@ -552,7 +555,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
   ): Promise<T> => requestManagerRef.current!.request<T>(action, window.__CODEX_ANYWHERE_CONFIG__?.owner && /^(turn.start|turn.steer)$/.test(action) ? { ...payload, intent: action === 'turn.start' ? 'start' : 'steer' } : payload, options), []);
 
   const { fileDownload, downloadLocalFile, cancelFileDownload, imageToSave, saveLocalImage, closeImageSave } = useFileTransfer({
-    online, request, reportTimelineError, environmentIdRef, selectedRequestRef, connectorOnlineRef, secureChannelRef,
+    online, request, environmentIdRef, selectedRequestRef, connectorOnlineRef, secureChannelRef,
   });
   const { readVisualization, readTextFile, readTurnDiff, readPreviewImage } = useFilePreviews(request, threadId);
 
@@ -587,9 +590,13 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     return [...attachments.values()];
   }, [environmentId, knownAttachments, threadId, timeline]);
 
+  const suggestedDraft = useMemo(() => followUpDraft(timeline), [timeline]);
+  const textDrafts = useRef(new Map<string, string>());
+  const draftKey = (environment: string, thread: string | null) => JSON.stringify([environment, thread]);
+  const [openedSession, setOpenedSession] = useState<Session | null>(null);
   const activeSession = useMemo(
-    () => sessions.find((session) => session.id === threadId) || null,
-    [sessions, threadId],
+    () => sessions.find((session) => session.id === threadId) || (openedSession?.id === threadId ? openedSession : null),
+    [sessions, threadId, openedSession],
   );
 
   const { attachmentUrls, rememberImage, retryImages } = useTimelineImages(
@@ -1529,19 +1536,26 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     if (authenticated && online) preloadMessageBubble();
   }, [authenticated, online]);
 
-  const selectSession = useCallback((session: Session | null, { closeDrawer = true }: { closeDrawer?: boolean } = {}) => {
+  const selectSession = useCallback((session: Session | null, { closeDrawer = true, switchingPc = false }: { closeDrawer?: boolean; switchingPc?: boolean } = {}) => {
     const nextThreadId = session?.id || null;
     if (nextThreadId) {
       updateSessionAttention((current) => markSessionAttentionRead(current, nextThreadId));
     }
-    if (nextThreadId && nextThreadId === threadIdRef.current) {
+    if (!switchingPc && nextThreadId && nextThreadId === threadIdRef.current) {
       if (closeDrawer) setDrawerOpen(false);
       return;
     }
+    const previousKey = draftKey(environmentIdRef.current, threadIdRef.current);
+    if (!switchingPc) {
+      if (prompt) textDrafts.current.set(previousKey, prompt); else textDrafts.current.delete(previousKey);
+    }
+    setPrompt(textDrafts.current.get(draftKey(environmentIdRef.current, nextThreadId)) || '');
+    setPendingAttachment(null);
     cancelFileDownload();
     invalidateMessageAttachment();
     selectedRequestRef.current += 1;
     const requestVersion = selectedRequestRef.current;
+    setOpenedSession(session);
     setThreadId(nextThreadId);
     threadIdRef.current = nextThreadId;
     setCreatingNewSession(false);
@@ -1575,7 +1589,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
       preloadMessageBubble();
       void loadHistory(nextThreadId, null, requestVersion);
     }
-  }, [cancelFileDownload, invalidateMessageAttachment, loadHistory, resetExecutionPresentation, updateSessionAttention]);
+  }, [cancelFileDownload, invalidateMessageAttachment, loadHistory, prompt, resetExecutionPresentation, setPendingAttachment, updateSessionAttention]);
 
   const selectEnvironment = useCallback((value: string) => {
     const nextEnvironmentId = normalizeEnvironmentId(value);
@@ -1593,6 +1607,8 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     ownedTurnThreadIdRef.current = null;
     setOnline(false);
     setPendingAttachment(null);
+    const previousKey = draftKey(environmentIdRef.current, threadIdRef.current);
+    if (prompt) textDrafts.current.set(previousKey, prompt); else textDrafts.current.delete(previousKey);
     setEnvironmentId(nextEnvironmentId);
     environmentIdRef.current = nextEnvironmentId;
     storeSelectedEnvironmentId(nextEnvironmentId);
@@ -1614,7 +1630,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
       const stored = loadEnvironmentValue(NEW_SESSION_CWD_KEY, nextEnvironmentId) || '';
       return isTemporaryProjectPath(stored) ? '' : stored;
     });
-    selectSession(null, { closeDrawer: false });
+    selectSession(null, { closeDrawer: false, switchingPc: true });
     resetExecution();
 
     const connectorAvailable = onlineEnvironmentIdsRef.current.includes(nextEnvironmentId);
@@ -1624,7 +1640,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     } else {
       setStatusText(environmentOfflineLabel(nextEnvironmentId, environmentLabelsRef.current));
     }
-  }, [beginSecureChannel, cancelFileDownload, closeNewSessionDialog, rejectPendingRequests, resetExecution, selectSession, setPendingAttachment]);
+  }, [beginSecureChannel, cancelFileDownload, closeNewSessionDialog, rejectPendingRequests, resetExecution, selectSession, setPendingAttachment, prompt]);
 
   useEffect(() => {
     if (authenticated && hasEnvironmentInventory && environmentIds.length && !environmentIds.includes(environmentId)) {
@@ -2528,6 +2544,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
       />
 
       <section className="conversation">
+        <div className="conversation-top">
         <header className="topbar">
           <button className="icon-button mobile-only" onClick={() => setDrawerOpen(true)} aria-label={t('展开会话列表', 'Expand session list')} title={t('展开会话列表', 'Expand session list')}>
             <SidebarIcon name="panel-open" />
@@ -2604,6 +2621,10 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
           />
         </header>
 
+        {threadId && online && connectorStatus?.capabilities.threadFamily && <ThreadFamily
+          key={environmentId + ':' + threadId} id={threadId} request={request} running={executionActive}
+          onSelect={session => selectSession(session)} />}
+        </div>
         {editTarget && editTarget.environment === environmentId && editTarget.threadId === threadId
           && editTarget.selection === selectedRequestRef.current && <MessageEditDialog
           originalText={editTarget.item.text} onPrepare={prepareMessageEdit} onSubmit={submitMessageEdit} onClose={closeMessageEditor} />}
@@ -2700,6 +2721,11 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
               >×</button>
             </div>
           )}
+          {online && !executionActive && !prompt && !pendingAttachment && suggestedDraft && <button
+            className="follow-up-draft" type="button" onClick={() => {
+              setPrompt(suggestedDraft);
+              composerInput.current?.focus();
+            }}><span>{t('采用建议', 'Use suggestion')} ↵</span>{suggestedDraft}</button>}
           <div className="composer">
             <input
               ref={attachmentInputRef}
@@ -2723,6 +2749,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
             >＋</button>
             <textarea
               rows={1}
+              ref={composerInput}
               value={prompt}
               onPaste={(event) => {
                 if (!online || running || uploading) return;
@@ -2733,7 +2760,11 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
               }}
               onChange={(event) => setPrompt(event.target.value)}
               onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') void sendTurn();
+                if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                if (event.ctrlKey || event.metaKey) { event.preventDefault(); void sendTurn(); }
+                else if (!event.shiftKey && !event.altKey && !prompt && !executionActive && !pendingAttachment && suggestedDraft) {
+                  event.preventDefault(); setPrompt(suggestedDraft);
+                }
               }}
               placeholder={uploading
                 ? t('正在上传附件…', 'Uploading attachment…')

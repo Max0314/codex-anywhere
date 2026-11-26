@@ -99,6 +99,20 @@ try {
         $path = Join-Path ([Environment]::GetFolderPath('Startup')) $name
         if(Test-Path -LiteralPath $path){ Remove-Item -LiteralPath $path -Force }
     }
+    # Preserve legacy attachment URLs when Windows later clears the temp directory.
+    $legacyImages = Join-Path ([IO.Path]::GetTempPath()) 'personal-codex-bridge/attachments'
+    $savedImages = Join-Path $env:USERPROFILE '.codex-anywhere/attachments'
+    if(Test-Path -LiteralPath $legacyImages -PathType Container) {
+        [IO.Directory]::CreateDirectory($savedImages) | Out-Null
+        foreach($file in @(Get-ChildItem -LiteralPath $legacyImages -File -ErrorAction SilentlyContinue)) {
+            if($file.Name -notmatch '^[0-9a-f-]{36}\.(png|jpg|webp)(\.preview)?$' -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint)){continue}
+            $target = Join-Path $savedImages $file.Name
+            if(-not [IO.File]::Exists($target)){
+                try { [IO.File]::Copy($file.FullName,$target,$false) }
+                catch [IO.FileNotFoundException] { continue }
+            }
+        }
+    }
     if(-not $NoStart) {
         Start-ConnectorRuntime $InstallBase
         $healthy = $false
@@ -121,7 +135,7 @@ try {
             try { Remove-Item -LiteralPath $safe -Recurse -Force } catch { Write-Warning '历史修复副本稍后清理。' }
         }
     }
-    Write-Output '安装完成。登录、设备身份和目录设置已保留。'
+    Write-Output '安装完成。已有登录和设备身份已保留。'
 } catch {
     $failure = $_
     $alreadyRecovered = $false

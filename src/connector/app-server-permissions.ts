@@ -73,7 +73,7 @@ export function approvalResult(
   method: string,
   approved: boolean,
   params: JsonObject = {},
-  allowedRoots: string[] = [],
+  allowedRoots: string[] | null = [],
   networkAccess = false,
 ) {
   if (isMcpToolApproval(method, params)) {
@@ -95,7 +95,7 @@ export function approvalResult(
 
 export function approvedPermissions(
   requested: JsonObject = {},
-  allowedRoots: string[],
+  allowedRoots: string[] | null,
   networkAccess: boolean,
 ) {
   const permissions: JsonObject = {};
@@ -166,7 +166,7 @@ export function permissionSettings(mode: PermissionMode, cwd: string, networkAcc
   };
 }
 
-function filterAllowedPaths(values: unknown, allowedRoots: string[]) {
+function filterAllowedPaths(values: unknown, allowedRoots: string[] | null) {
   return (Array.isArray(values) ? values : [])
     .map((value) => String(value || '').trim())
     .flatMap((value) => {

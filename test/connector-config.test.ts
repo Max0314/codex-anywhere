@@ -66,3 +66,11 @@ test('connector configuration rejects an unknown runtime mode', () => {
     /desktop or headless/,
   );
 });
+
+test('owner upgrades ignore project roots saved by the previous installer without changing Codex execution permissions', () => {
+  const config = loadConnectorConfig({ BRIDGE_OWNER_MODE: '1', BRIDGE_DEVICE_ID: 'pc-test',
+    CODEX_ALLOWED_ROOTS_JSON: '["old-project"]', CODEX_ALLOW_ANY_FILE_DOWNLOAD: '0' });
+  assert.equal(config.allowedRoots, null);
+  assert.equal(config.allowAnyFileDownload, true);
+  assert.equal(config.allowFullAccess, false);
+});

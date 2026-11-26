@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { lstat, mkdir, open, unlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { access, lstat, mkdir, open, unlink, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileTypeFromBuffer } from 'file-type';
 import { readGeneratedImagePreview } from './generated-images.js';
 import { readRasterImagePreview } from './image-previews.js';
@@ -41,9 +41,11 @@ export async function saveImageAttachment(payload: ImagePayload, options: Attach
   const original = await decodeImagePayload(payload, MAX_IMAGE_BYTES);
   const preview = payload?.preview ? await decodeImagePayload(payload.preview, MAX_PREVIEW_BYTES) : null;
 
-  const directory = resolve(options.directory || DEFAULT_ATTACHMENT_DIRECTORY);
+  const directory = attachmentDirectory(options);
   await ensureSafeDirectory(directory);
-  await cleanupAttachments(directory, options.now || Date.now(), options.maxAgeMs || ATTACHMENT_MAX_AGE_MS);
+  if (process.env.BRIDGE_OWNER_MODE !== '1') {
+    await cleanupAttachments(directory, options.now || Date.now(), options.maxAgeMs || ATTACHMENT_MAX_AGE_MS);
+  }
 
   const path = join(directory, `${randomUUID()}${original.extension}`);
   if (dirname(resolve(path)) !== directory) throw new Error('attachment_path_invalid');
@@ -65,7 +67,14 @@ export async function saveImageAttachment(payload: ImagePayload, options: Attach
   };
 }
 
+export async function ownerAttachmentPath(path: string) {
+  if (process.env.BRIDGE_OWNER_MODE !== '1' || dirname(resolve(path)) !== DEFAULT_ATTACHMENT_DIRECTORY) return path;
+  const archived = join(attachmentDirectory({}), basename(path));
+  try { await access(archived); return archived; } catch { return path; }
+}
+
 export async function readImageAttachment(payload: ImagePayload, options: AttachmentOptions = {}) {
+  if (!options.directory && typeof payload.path === 'string') payload = { ...payload, path: await ownerAttachmentPath(payload.path) };
   if (payload?.source === 'generated') {
     return readGeneratedImagePreview(payload, { directory: options.generatedDirectory });
   }
@@ -76,13 +85,16 @@ export async function readImageAttachment(payload: ImagePayload, options: Attach
       errorPrefix: 'local_image',
     });
   }
-  const directory = resolve(options.directory || DEFAULT_ATTACHMENT_DIRECTORY);
+  const directory = attachmentDirectory(options, payload.path);
   await ensureSafeDirectory(directory);
   const path = resolve(String(payload?.path || ''));
   if (dirname(path) !== directory) throw new Error('attachment_path_not_allowed');
 
   const candidate = await readablePreviewPath(path);
-  if (!candidate) throw new Error('attachment_preview_not_found');
+  if (!candidate) {
+    if (process.env.BRIDGE_OWNER_MODE === '1') return readRasterImagePreview({ path, allowedRoots: [directory], errorPrefix: 'local_image' });
+    throw new Error('attachment_preview_not_found');
+  }
   const stats = await lstat(candidate).catch((error) => {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('attachment_not_found');
     throw error;
@@ -108,7 +120,7 @@ export async function readImageAttachment(payload: ImagePayload, options: Attach
 
 /** Only originals already accepted by attachment.upload can enter native input. */
 export async function resolveNativeImageAttachment(payload: ImagePayload, options: AttachmentOptions = {}): Promise<string> {
-  const directory = resolve(options.directory || DEFAULT_ATTACHMENT_DIRECTORY);
+  const directory = attachmentDirectory(options, payload.path);
   await ensureSafeDirectory(directory);
   const path = resolve(String(payload?.path || ''));
   if (dirname(path) !== directory || !/^[\da-f-]{36}\.(png|jpg|webp)$/i.test(path.slice(directory.length + 1))) throw new Error('attachment_path_not_allowed');
@@ -142,6 +154,15 @@ async function decodeImagePayload(payload: ImagePayload, maxBytes: number) {
   const detected = await detectImageType(bytes);
   if (detected?.mimeType !== mimeType) throw new Error('attachment_content_mismatch');
   return { bytes, extension, mimeType };
+}
+
+function attachmentDirectory(options: AttachmentOptions, existingPath?: unknown) {
+  if (options.directory) return resolve(options.directory);
+  if (process.env.BRIDGE_OWNER_MODE !== '1') return DEFAULT_ATTACHMENT_DIRECTORY;
+  if (typeof existingPath === 'string' && dirname(resolve(existingPath)) === DEFAULT_ATTACHMENT_DIRECTORY) {
+    return DEFAULT_ATTACHMENT_DIRECTORY;
+  }
+  return join(homedir(), '.codex-anywhere', 'attachments');
 }
 
 function previewPath(path: string) {

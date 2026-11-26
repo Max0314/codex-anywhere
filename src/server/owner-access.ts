@@ -59,6 +59,8 @@ type Intent = {
   revision: number;
   expiry: number;
   approved: boolean;
+  approving?: boolean;
+  approvalResult?: { redirect: string };
   approvalSession?: string;
   pending?: Promise<unknown>;
 };
@@ -660,30 +662,39 @@ export class OwnerAccess {
           const intent = this.intents.get(path.split("/")[4]);
           if (!intent || intent.expiry < Date.now())
             fail(400, "intent_expired");
-          if (intent.approved || intent.pending)
-            fail(409, "intent_already_approved");
-          intent.approvalSession = session.key;
-          intent.approved = true;
-          const publicSession = await this.call(
-            "/_fribench/auth/session",
-            undefined,
-            { cookie: session.cookie, origin: this.origin },
-          );
-          const result = await this.call(
-            "/_fribench/desktop/approve",
-            {
-              csrf: publicSession.csrf,
-              code_challenge: intent.challenge,
-              state: intent.state,
-              redirect_uri: intent.redirectUri,
-            },
-            { cookie: session.cookie, origin: this.origin },
-          );
-          if (this.state.sessions[session.key]?.revoked) {
-            this.intents.delete(intent.id);
-            fail(403, "device_revoked");
+          if (intent.approved && intent.approvalSession === session.key && intent.approvalResult) {
+            json(200, intent.approvalResult);
+            return true;
           }
-          json(200, result);
+          if (intent.approved || intent.pending || intent.approving) fail(409, "intent_already_approved");
+          intent.approving = true;
+          try {
+            const publicSession = await this.call(
+              "/_fribench/auth/session",
+              undefined,
+              { cookie: session.cookie, origin: this.origin },
+            );
+            const result = await this.call(
+              "/_fribench/desktop/approve",
+              {
+                csrf: publicSession.csrf,
+                code_challenge: intent.challenge,
+                state: intent.state,
+                redirect_uri: intent.redirectUri,
+              },
+              { cookie: session.cookie, origin: this.origin },
+            );
+            if (this.state.sessions[session.key]?.revoked) {
+              this.intents.delete(intent.id);
+              fail(403, "device_revoked");
+            }
+            intent.approvalSession = session.key;
+            intent.approved = true;
+            intent.approvalResult = { redirect: result.redirect };
+            json(200, result);
+          } finally {
+            intent.approving = false;
+          }
           return true;
         }
         if (path.startsWith("/api/devices/") && path.endsWith("/revoke")) {
@@ -744,6 +755,11 @@ export class OwnerAccess {
           "cache-control": "no-store",
         });
         response.end();
+      } else if (path === "/desktop-connect") {
+        response.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+        response.end(page("连接电脑", status === 403
+          ? '<h1>请使用设备主人的 Fribench 账号</h1><p>请切换至已授权的账号，再从电脑客户端登录。</p>'
+          : '<h1>连接暂未完成</h1><p>请回到电脑客户端，重新点击「登录 Fribench」。</p>'));
       } else
         json(status, {
           error: (error as Error).message,
@@ -877,7 +893,7 @@ export class OwnerAccess {
     response.end(
       page(
         "下载客户端",
-        '<a class="back-link" href="/">← 返回会话</a><div class="app-mark" aria-hidden="true">&gt;_</div><p class="eyebrow">CODEX ANYWHERE</p><h1>在手机上继续 Codex 会话</h1><p class="intro">安装 Fribench Codex Connector，从手机继续电脑上的 Codex 会话。</p><div class="download-card"><div><h2>Windows 客户端</h2><p>Windows 11 · x64 · 通用安装包</p></div><button id="download">下载安装包 ↓</button><p id="status" role="status"></p></div><section class="requirements"><h2>开始之前</h2><p>在已安装并登录 Codex Desktop 的 Windows 用户下安装。安装包内置运行环境，无需另外安装 Node.js 或 Git。</p><p>安装后连接 Fribench，选择允许访问的项目目录。每台电脑安装相同的客户端，在手机侧栏切换电脑。</p><p>远程使用时，电脑需保持开机、登录和联网。</p></section><p class="account-link"><a href="/_fribench/auth/login?return_to=%2Fdownload">登录 Fribench</a> 后可下载和管理设备</p><script src="/owner-download.js"></script>',
+        '<a class="back-link" href="/">← 返回会话</a><div class="app-mark" aria-hidden="true">&gt;_</div><p class="eyebrow">CODEX ANYWHERE</p><h1>在手机上继续 Codex 会话</h1><p class="intro">安装 Fribench Codex Connector，从手机继续电脑上的 Codex 会话。</p><div class="download-card"><div><h2>Windows 客户端</h2><p>Windows 11 · x64 · 通用安装包</p></div><button id="download">下载安装包 ↓</button><p id="status" role="status"></p></div><section class="requirements"><h2>开始之前</h2><p>在已安装并登录 Codex Desktop 的 Windows 用户下安装。安装包内置运行环境，无需另外安装 Node.js 或 Git。</p><p>首次打开客户端，点击「登录 Fribench」并在浏览器确认。以后登录 Windows 后会自动连接。每台电脑安装相同的客户端，在手机侧栏切换电脑。</p><p>远程使用时，电脑需保持开机、登录和联网。</p></section><p class="account-link"><a href="/_fribench/auth/login?return_to=%2Fdownload">登录 Fribench</a> 后可下载和管理设备</p><script src="/owner-download.js"></script>',
       ),
     );
   }
