@@ -75,6 +75,7 @@ function serveRuntimeConfig(
 ) {
   const body = `window.__CODEX_ANYWHERE_CONFIG__ = ${JSON.stringify({
     locale, owner: ['owner', 'account'].includes(process.env.ACCESS_MODE || ''),
+    ...(process.env.ACCESS_MODE === 'account' && { multiAccount: true }),
   })};\n`;
   response.writeHead(200, {
     'content-type': 'text/javascript; charset=utf-8',

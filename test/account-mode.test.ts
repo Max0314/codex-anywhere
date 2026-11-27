@@ -57,6 +57,7 @@ test('account mode scopes inventory, PC operations and both WebSocket directions
     const relayAddress = relay.httpServer.address();
     assert.ok(relayAddress && typeof relayAddress !== 'string');
     const base = 'http://127.0.0.1:' + relayAddress.port;
+    assert.match(await fetch(base + '/config.js').then(response => response.text()), /"multiAccount":true/);
     const headers = (token: string) => ({ cookie: '__Host-fribench_codex_anywhere=' + token });
     const access = (token: string) => fetch(base + '/api/access', { headers: headers(token) }).then(r => r.json()) as Promise<{
       accountKey: string; csrf: string; migrateLegacyBrowser: boolean;
