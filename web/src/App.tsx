@@ -2372,7 +2372,7 @@ export default function App({ initialPairingInput = null, account }: { initialPa
   </div>;
   if (account && authenticated && hasEnvironmentInventory && !environmentIds.includes(environmentId)) {
     const empty = environmentIds.length === 0;
-    return <main className="login-shell"><section className="login-card owner-login-card">
+    return <main className="login-shell"><section className="login-card owner-login-card owner-onboarding">
       <div className="owner-login-mark" aria-hidden="true"><BrandIcon /></div>
       <h1>{empty ? '还没有连接电脑' : '选择一台电脑'}</h1>
       <p>{empty ? '在电脑上安装 Connector，然后登录同一个 Fribench 账号。连接后，电脑会自动出现在这里。' : '你可以随时点顶部的电脑名称切换。'}</p>

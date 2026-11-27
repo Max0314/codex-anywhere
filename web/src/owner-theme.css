@@ -728,3 +728,6 @@ html[data-theme] .brand-mark { background: var(--ui-text); color: var(--ui-bg); 
 .thread-references button, .thread-references summary { min-height: 44px; cursor: pointer; text-align: left; color: inherit; }
 .thread-references button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread-references small { display: block; opacity: .76; }
+
+.owner-onboarding .owner-login-button { width: max-content; margin-inline: auto; padding-inline: 1.1rem; }
+.owner-onboarding .owner-download-link { min-height: 44px; }
