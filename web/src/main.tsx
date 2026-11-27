@@ -17,7 +17,7 @@ if (owner) { const script = document.createElement('script'); script.src = '/_fr
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    {owner ? <OwnerShell><App initialPairingInput={null} /></OwnerShell> : <App initialPairingInput={initialPairingInput} /> }
+    {owner ? <OwnerShell>{account => <App key={account?.key || "owner"} account={account} initialPairingInput={null} />}</OwnerShell> : <App initialPairingInput={initialPairingInput} /> }
   </StrictMode>,
 );
 

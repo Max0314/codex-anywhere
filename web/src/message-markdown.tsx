@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import remarkCjkFriendly from 'remark-cjk-friendly/parseOnly';
 import { remarkLineBreaks } from './markdown-line-breaks';
 import { remarkMarkdownFile } from './markdown-file';
+import { remarkThreadReferences, ThreadReferences } from './thread-references';
 import { t } from './i18n';
 import { isRasterImageFilePath, localFileName, localFilePathFromHref, localFilePathFromRelativeHref } from './file-utils';
 import { isSvgCodeClass, isSvgFilePath, LocalSvgImage, SvgPreview } from './svg-preview';
@@ -22,6 +23,8 @@ export const MessageMarkdown = memo(function MessageMarkdown({
   attachmentPath,
   basePath,
   filePreview = false,
+  threadReferences,
+  streaming = false,
   onDownloadFile,
   onReadTextFile,
   onPreviewImage,
@@ -30,11 +33,18 @@ export const MessageMarkdown = memo(function MessageMarkdown({
   attachmentPath?: string;
   basePath?: string;
   filePreview?: boolean;
+  threadReferences?: boolean;
+  streaming?: boolean;
   onDownloadFile: (path: string) => void;
   onReadTextFile?: (path: string) => Promise<TextPreviewDocument>;
   onPreviewImage?: (path: string) => void;
 }) {
+  const plugins = useMemo(() => filePreview ? markdownFilePlugins : threadReferences ? [...markdownPlugins, remarkThreadReferences(streaming)] : markdownPlugins, [filePreview, threadReferences, streaming]);
   const components = useMemo<Components>(() => ({
+    aside: ({ node, children }) => {
+      const ids = node?.properties?.dataThreadReferences ?? node?.properties?.['data-thread-references'];
+      return typeof ids === 'string' ? <ThreadReferences ids={ids} /> : <aside>{children}</aside>;
+    },
     table: ({ node: _node, children, ...props }) => (
       <div className="markdown-table-scroll" tabIndex={0} role="region" aria-label={t('表格', 'Table')}>
         <table {...props}>{children}</table>
@@ -94,7 +104,7 @@ export const MessageMarkdown = memo(function MessageMarkdown({
   }), [attachmentPath, basePath, onDownloadFile, onReadTextFile, onPreviewImage]);
   return (
     <ReactMarkdown
-      remarkPlugins={filePreview ? markdownFilePlugins : markdownPlugins}
+      remarkPlugins={plugins}
       components={components}
       urlTransform={messageUrlTransform}
     >

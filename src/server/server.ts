@@ -78,7 +78,8 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
   const extensionOrigins = options.extensionOrigins ?? (process.env.BRIDGE_EXTENSION_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
   if (extensionOrigins.some((origin) => !/^chrome-extension:\/\/[a-p]{32}$/.test(origin))) throw new Error('invalid_extension_origin_allowlist');
   const connectorToken = String(options.connectorToken || process.env.BRIDGE_CONNECTOR_TOKEN || '');
-  if (process.env.ACCESS_MODE !== 'owner' && connectorToken.length < 32) throw new Error('BRIDGE_CONNECTOR_TOKEN must contain at least 32 characters');
+  const accountAccess = ['owner', 'account'].includes(process.env.ACCESS_MODE || '');
+  if (!accountAccess && connectorToken.length < 32) throw new Error('BRIDGE_CONNECTOR_TOKEN must contain at least 32 characters');
   const publicDir = resolve(options.publicDir || defaultPublicDir);
   const staticHandler = sirv(publicDir, {
     dev: !existsSync(publicDir),
@@ -99,15 +100,26 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
       options.connectorToken ? null : resolve('data/devices.json')
     );
   const deviceRegistry = options.deviceRegistry || new DeviceRegistry(configuredRegistryPath);
-  const owner = process.env.ACCESS_MODE === 'owner' ? new OwnerAccess(deviceRegistry) : null;
+  const owner = accountAccess ? new OwnerAccess(deviceRegistry) : null;
   const leases = new Map<AliveWebSocket, OwnerLease>();
-  const deviceActivity = new DeviceActivity(deviceActivityPath(deviceRegistry.filePath), () => deviceRegistry.listApproved(), options.clock);
+  const deviceActivity = new DeviceActivity(deviceActivityPath(deviceRegistry.filePath), () => owner?.multiAccount ? owner.activeDevices() : deviceRegistry.listApproved(), options.clock);
   let activityTimer: ReturnType<typeof setInterval> | undefined;
   const connectors = new Map<string, AliveWebSocket>();
   const clients = new Map<string, AliveWebSocket>();
   const socketMeta = new WeakMap<AliveWebSocket, SocketMeta>();
   const activeClients = () => new Map([...clients].filter(([, socket]) => !owner || leases.has(socket) && owner.valid(leases.get(socket)!)));
   const activeConnectors = () => new Map([...connectors].filter(([, socket]) => !owner || leases.has(socket) && !leases.get(socket)!.legacy && owner.valid(leases.get(socket)!)));
+  const sendPresence = () => {
+    const active = activeConnectors();
+    if (!owner?.multiAccount) {
+      broadcastPresence(activeClients(), active, deviceRegistry);
+      return;
+    }
+    for (const socket of activeClients().values()) {
+      const lease = leases.get(socket)!;
+      safeSend(socket, { type: 'presence', ...accountInventory(owner, lease.device.sub, active) });
+    }
+  };
   const trustProxy = options.trustProxy ?? process.env.BRIDGE_TRUST_PROXY === '1';
   const sessionMaxAgeMs = positiveInteger(
     options.sessionMaxAgeMs ?? Number(process.env.BRIDGE_SESSION_MAX_AGE_MS),
@@ -188,6 +200,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
             socket, message, connectorToken, authChallenge, ownerMode: Boolean(owner) && !leases.get(socket)?.legacy,
             connectors, clients, socketMeta, authTimer,
             authLimiter, clientAddress, deviceRegistry,
+            account: owner?.multiAccount && !leases.get(socket)?.legacy ? { access: owner, lease: leases.get(socket)!, connectors: activeConnectors() } : undefined,
             extensionOrigin: extensionOrigins.includes(String(request.headers.origin)) ? String(request.headers.origin) : '',
           });
           if (authenticated) {
@@ -195,7 +208,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
             deviceActivity.connected(socket, identity.role, identity.device.id);
             sessionTimer = setTimeout(() => socket.close(4005, 'authentication expired'), sessionMaxAgeMs);
             sessionTimer.unref?.();
-            broadcastPresence(activeClients(), activeConnectors(), deviceRegistry);
+            sendPresence();
           }
           return;
         }
@@ -209,11 +222,14 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
         if (message.type === 'relay.request' && meta.role === 'client') {
           const requestId = String(message.requestId || '').slice(0, 128);
           try {
-            if (!deviceRegistry.isApproved('client', meta.device)) throw new Error('device_not_approved');
+            if (!owner?.multiAccount && !deviceRegistry.isApproved('client', meta.device)) throw new Error('device_not_approved');
             if (message.action !== 'device.rename') throw new Error('unsupported_relay_action');
-            const data = deviceRegistry.renameConnector(String(message.payload?.deviceId || ''), message.payload?.label);
+            const target = String(message.payload?.deviceId || '');
+            const data = owner?.multiAccount
+              ? owner.renameConnector(leases.get(socket)!.device.sub, target, message.payload?.label)
+              : deviceRegistry.renameConnector(target, message.payload?.label);
             safeSend(socket, { type: 'relay.response', requestId, ok: true, data });
-            broadcastPresence(activeClients(), activeConnectors(), deviceRegistry);
+            sendPresence();
           } catch (error) {
             safeSend(socket, { type: 'relay.response', requestId, ok: false, error: publicError(error) });
           }
@@ -224,10 +240,17 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
           return;
         }
         if (meta.role === 'client') {
-          routeClientMessage({ socket, meta, message, connectors: activeConnectors() });
+          const sub = owner?.multiAccount ? leases.get(socket)!.device.sub : '';
+          routeClientMessage({ socket, meta, message, connectors: activeConnectors(), sub });
         } else {
-          if (connectors.get(meta.deviceId) !== socket) return;
-          routeConnectorMessage({ message, clients: activeClients(), meta });
+          const sub = owner?.multiAccount ? leases.get(socket)!.device.sub : '';
+          if (connectors.get(connectorKey(sub, meta.deviceId)) !== socket) return;
+          const active = activeClients();
+          if (sub) {
+            const recipient = active.get(String(message.clientId || ''));
+            if (!recipient || leases.get(recipient)?.device.sub !== sub) return;
+          }
+          routeConnectorMessage({ message, clients: active, meta });
         }
       } catch (error) {
         safeSend(socket, { type: 'error', error: publicError(error) });
@@ -238,6 +261,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
     socket.on('close', () => {
       clearTimeout(authTimer);
       if (sessionTimer) clearTimeout(sessionTimer);
+      const sub = owner?.multiAccount ? leases.get(socket)?.device.sub || '' : '';
       leases.delete(socket);
       deviceActivity.disconnected(socket);
       const meta = socketMeta.get(socket);
@@ -249,15 +273,15 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
           safeSend(connector, { type: 'client.disconnected', clientId: meta.id });
         }
       }
-      if (meta.role === 'connector' && connectors.get(meta.deviceId) === socket) connectors.delete(meta.deviceId);
-      broadcastPresence(activeClients(), activeConnectors(), deviceRegistry);
+      if (meta.role === 'connector' && connectors.get(connectorKey(sub, meta.deviceId)) === socket) connectors.delete(connectorKey(sub, meta.deviceId));
+      sendPresence();
     });
     safeSend(socket, {
       type: 'auth.challenge', challenge: authChallenge, protocol: createProtocolOffer(undefined, Boolean(owner) && request.url !== '/ws'),
     });
   });
 
-  owner && (owner.onRevoke = (role, id) => { for (const [socket, lease] of leases) if (lease.device.role === role && lease.device.id === id) socket.close(4403, 'device revoked'); });
+  owner && (owner.onRevoke = (role, id, sub) => { for (const [socket, lease] of leases) if (lease.device.role === role && lease.device.id === id && lease.device.sub === sub) socket.close(4403, 'device revoked'); });
   const renewals = new Set<AliveWebSocket>();
   const renewalTimer = setInterval(() => {
     if (!owner) return;
@@ -273,7 +297,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
     for (const rawSocket of webSocketServer.clients) {
       const socket = rawSocket as AliveWebSocket;
       const meta = socketMeta.get(socket);
-      if (meta && !deviceRegistry.isApproved(meta.role, meta.device)) {
+      if (meta && (!owner?.multiAccount || leases.get(socket)?.legacy) && !deviceRegistry.isApproved(meta.role, meta.device)) {
         socket.close(4403, 'device approval revoked');
         continue;
       }
@@ -284,7 +308,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
       socket.isAlive = false;
       socket.ping();
     }
-    broadcastPresence(activeClients(), activeConnectors(), deviceRegistry);
+    sendPresence();
   }, heartbeatIntervalMs);
   heartbeat.unref?.();
 
@@ -318,7 +342,7 @@ export function createBridgeServer(options: BridgeServerOptions = {}) {
 
 function authenticateSocket({
   socket, message, connectorToken, authChallenge,
-  connectors, clients, socketMeta, authTimer, authLimiter, clientAddress, deviceRegistry, extensionOrigin, ownerMode = false,
+  connectors, clients, socketMeta, authTimer, authLimiter, clientAddress, deviceRegistry, extensionOrigin, ownerMode = false, account,
 }: {
   socket: AliveWebSocket;
   message: JsonObject;
@@ -333,6 +357,7 @@ function authenticateSocket({
   deviceRegistry: DeviceRegistry;
   extensionOrigin: string;
   ownerMode?: boolean;
+  account?: { access: OwnerAccess; lease: OwnerLease; connectors: Map<string, AliveWebSocket> };
 }) {
   const authType = String(message.type || '');
   const role = message.role === 'connector' ? 'connector' : message.role === 'client' ? 'client' : '';
@@ -442,7 +467,7 @@ function authenticateSocket({
       label: device.label,
     });
     if (!approved) return rejectAuthentication(socket, authLimiter, clientAddress);
-  } else if (!deviceRegistry.isApproved(role, device)) {
+  } else if (!account && !deviceRegistry.isApproved(role, device)) {
     if (authMode === 'connector-token') {
       deviceRegistry.requestPairing({
         role,
@@ -461,20 +486,21 @@ function authenticateSocket({
   }
   clearTimeout(authTimer);
   if (role === 'connector') {
-    try { deviceRegistry.assertConnectorRoute(device, deviceId); }
+    try { if (!account) deviceRegistry.assertConnectorRoute(device, deviceId); }
     catch (error) {
       safeSend(socket, { type: 'error', error: publicError(error) });
       socket.close(4409, (error as Error).message);
       return false;
     }
-    const previous = connectors.get(deviceId);
+    const key = connectorKey(account?.lease.device.sub || '', deviceId);
+    const previous = connectors.get(key);
     const previousMeta = previous && socketMeta.get(previous);
     if (previousMeta && (previousMeta.device.id !== device.id || previousMeta.device.publicKey !== device.publicKey)) {
       socket.close(4409, 'device_route_conflict');
       return false;
     }
     if (previous && previous !== socket) previous.close(4004, 'connector replaced');
-    connectors.set(deviceId, socket);
+    connectors.set(key, socket);
     socketMeta.set(socket, {
       role, deviceId, device: { id: device.id, publicKey: device.publicKey },
     });
@@ -488,8 +514,8 @@ function authenticateSocket({
   });
   safeSend(socket, {
     type: 'auth.ok', role, clientId: id,
-    devices: [...connectors.keys()].sort(),
-    environments: connectorInventory(deviceRegistry, connectors),
+    ...(account ? accountInventory(account.access, account.lease.device.sub, account.connectors)
+      : { devices: [...connectors.keys()].sort(), environments: connectorInventory(deviceRegistry, connectors) }),
     protocol,
     authMode,
   });
@@ -508,14 +534,15 @@ function rejectAuthentication(
   return false;
 }
 
-function routeClientMessage({ socket, meta, message, connectors }: {
+function routeClientMessage({ socket, meta, message, connectors, sub }: {
   socket: AliveWebSocket;
   meta: Extract<SocketMeta, { role: 'client' }>;
   message: JsonObject;
   connectors: Map<string, AliveWebSocket>;
+  sub: string;
 }) {
   const deviceId = String(message.deviceId || 'personal-pc');
-  const connector = connectors.get(deviceId);
+  const connector = connectors.get(connectorKey(sub, deviceId));
   if (isSecureClientFrame(message.type)) {
     if (!connector) {
       safeSend(socket, { type: 'channel.error', error: 'connector_offline', deviceId });
@@ -577,6 +604,17 @@ function isSecureClientFrame(type: unknown) {
 function isSecureConnectorFrame(type: unknown) {
   return type === 'channel.accept' || type === 'channel.ready'
     || type === 'channel.error' || type === 'secure';
+}
+
+function connectorKey(sub: string, deviceId: string) {
+  return sub ? sub + ':' + deviceId : deviceId;
+}
+
+function accountInventory(access: OwnerAccess, sub: string, connectors: Map<string, AliveWebSocket>) {
+  const environments = access.activeDevices(sub).flatMap(device => device.role === 'connector' && device.routeId
+    ? [{ id: device.routeId, label: device.label, online: connectors.has(connectorKey(sub, device.routeId)) }] : [])
+    .sort((left, right) => left.id.localeCompare(right.id));
+  return { environments, devices: environments.filter(device => device.online).map(device => device.id) };
 }
 
 function broadcastPresence(

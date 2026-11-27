@@ -584,6 +584,7 @@ function MessageBubbleComponent({
         /> : instructions ? <AgentInstructionsCard instructions={instructions}
           onDownloadFile={openLocalFile} onReadTextFile={onReadTextFile} /> : <MessageMarkdown
           text={item.text}
+          threadReferences={item.kind === "assistant"} streaming={Boolean(item.transient && !item.completedAt)}
           attachmentPath={item.attachment?.path}
           onPreviewImage={onReadPreviewImage ? openLocalFile : undefined}
           onReadTextFile={onReadTextFile}

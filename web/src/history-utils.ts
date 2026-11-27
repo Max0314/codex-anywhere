@@ -696,11 +696,21 @@ export function resolveTimelineAttachment(
       : undefined);
 }
 
-export function loadKnownAttachments(): Record<string, KnownAttachment> {
+type AttachmentAccount = { key: string; migrateLegacy: boolean };
+
+function attachmentStorageKey(account?: AttachmentAccount) {
+  return account ? ATTACHMENT_STORAGE_KEY + '.' + account.key : ATTACHMENT_STORAGE_KEY;
+}
+
+export function loadKnownAttachments(account?: AttachmentAccount): Record<string, KnownAttachment> {
   try {
-    const legacy = JSON.parse(localStorage.getItem('bridge.knownAttachments') || '{}') as Record<string, KnownAttachment>;
-    const current = JSON.parse(localStorage.getItem(ATTACHMENT_STORAGE_KEY) || '{}') as Record<string, KnownAttachment>;
-    const value = { ...legacy, ...current };
+    const key = attachmentStorageKey(account);
+    const saved = localStorage.getItem(key);
+    const previous = account?.migrateLegacy && saved === null
+      ? Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem(ATTACHMENT_STORAGE_KEY) || '{}'))
+        .filter(([id]) => id.split('\0').length === 3)) : {};
+    const legacy = !account ? JSON.parse(localStorage.getItem('bridge.knownAttachments') || '{}') : {};
+    const value: Record<string, KnownAttachment> = { ...previous, ...legacy, ...JSON.parse(saved || '{}') };
     const now = Date.now();
     const valid = Object.fromEntries(Object.entries(value).filter(([, attachment]) => (
       attachment
@@ -709,14 +719,14 @@ export function loadKnownAttachments(): Record<string, KnownAttachment> {
       && Number.isFinite(attachment.savedAt)
       && now - attachment.savedAt < 24 * 60 * 60 * 1000
     )));
-    localStorage.setItem(ATTACHMENT_STORAGE_KEY, JSON.stringify(valid));
-    localStorage.removeItem('bridge.knownAttachments');
+    localStorage.setItem(key, JSON.stringify(valid));
+    if (!account) localStorage.removeItem('bridge.knownAttachments');
     return valid;
   } catch {
     return {};
   }
 }
 
-export function storeKnownAttachments(value: Record<string, KnownAttachment>) {
-  localStorage.setItem(ATTACHMENT_STORAGE_KEY, JSON.stringify(value));
+export function storeKnownAttachments(value: Record<string, KnownAttachment>, account?: AttachmentAccount) {
+  localStorage.setItem(attachmentStorageKey(account), JSON.stringify(value));
 }

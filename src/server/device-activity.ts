@@ -6,6 +6,8 @@ import type { ApprovedDevice } from './device-registry.js';
 
 export const ACTIVITY_INTERVAL_MS = 5_000;
 export const ACTIVITY_STALE_MS = 15_000;
+type ActivityDevice = Pick<ApprovedDevice, 'role' | 'id'>;
+
 type DeviceActivityRecord = {
   id: string; role: AuthRole; connections: number;
   lastConnectedAt: number | null; lastSeenAt: number | null;
@@ -60,7 +62,7 @@ export class DeviceActivity {
   private records = new Map<string, DeviceActivityRecord>();
   private stopped = false;
   private warned = false;
-  constructor(readonly path: string | null, private approved: () => ApprovedDevice[], private clock = Date.now) {
+  constructor(readonly path: string | null, private approved: () => ActivityDevice[], private clock = Date.now) {
     for (const record of readDeviceActivity(path)?.devices ?? []) {
       this.records.set(keyOf(record.role, record.id), { ...record, connections: 0 });
     }

@@ -5,9 +5,10 @@ import { attachLatestAssistantFileChanges, historyItems, mergeHistorySnapshot } 
 export async function loadHistoryPage(
   request: BridgeRequest, threadId: string, cursor: string | null, limit: number,
   onConversation?: (result: { page: HistoryPage; items: ReturnType<typeof historyItems> }) => void,
+  firstPage?: HistoryPage,
 ) {
   const results = await Promise.allSettled([
-    request<HistoryPage>('session.turns.list', { threadId, cursor, limit, mode: 'conversation' }).then(page => { onConversation?.({ page, items: attachLatestAssistantFileChanges(historyItems(page.turns, page.source), page.turnProgress) }); return page; }),
+    (firstPage ? Promise.resolve(firstPage) : request<HistoryPage>('session.turns.list', { threadId, cursor, limit, mode: 'conversation' })).then(page => { onConversation?.({ page, items: attachLatestAssistantFileChanges(historyItems(page.turns, page.source), page.turnProgress) }); return page; }),
     cursor ? Promise.resolve(null) : request<HistoryPage>(
       'session.turns.list', { threadId, limit: 2, mode: 'live' }, { timeoutMs: 5_000 },
     ).catch(() => null),

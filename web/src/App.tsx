@@ -1,4 +1,5 @@
-import { ThreadFamily } from './thread-family';
+import { ThreadFamily, useThreadFamily } from './thread-family';
+import { ThreadReferenceContext } from './thread-references';
 import { followUpDraft } from './follow-up-draft';
 import { MessageEditDialog, type MessageEditPlan } from './message-edit-dialog';
 import {
@@ -115,15 +116,15 @@ import {
   environmentOfflineLabel,
   environmentOnlineLabel,
   environmentShortName,
-  loadEnvironmentValue,
-  loadKnownEnvironmentIds,
-  loadSelectedEnvironmentId,
+  loadEnvironmentValue as loadEnvironmentValueFromStorage,
+  loadKnownEnvironmentIds as loadKnownEnvironmentIdsFromStorage,
+  loadSelectedEnvironmentId as loadSelectedEnvironmentIdFromStorage,
   mergeKnownEnvironmentIds,
   normalizeEnvironmentId,
   normalizeEnvironmentIds,
-  storeEnvironmentValue,
-  storeKnownEnvironmentIds,
-  storeSelectedEnvironmentId,
+  storeEnvironmentValue as storeEnvironmentValueFromStorage,
+  storeKnownEnvironmentIds as storeKnownEnvironmentIdsFromStorage,
+  storeSelectedEnvironmentId as storeSelectedEnvironmentIdFromStorage,
 } from './execution-environments';
 import { normalizeToolPurpose } from '../../src/shared/message-content';
 import {
@@ -154,6 +155,7 @@ import {
   hasApprovedBrowserDevice,
   loadOrCreateBrowserDeviceIdentity,
   markBrowserDeviceApproved,
+  type BrowserAccount,
 } from './device-identity';
 import {
   DEVICE_KEY_AUTH_CONTEXT,
@@ -189,10 +191,10 @@ const PairingDialog = lazy(() => import('./pairing-dialog').then((module) => ({
   default: module.PairingDialog,
 })));
 
-function loadSessionAttention(environmentId = DEFAULT_ENVIRONMENT_ID): SessionAttentionState {
+function loadSessionAttention(environmentId = DEFAULT_ENVIRONMENT_ID, storage?: Pick<Storage, "getItem">): SessionAttentionState {
   try {
     const stored = JSON.parse(
-      loadEnvironmentValue(SESSION_ATTENTION_KEY, environmentId) || '{}',
+      loadEnvironmentValueFromStorage(SESSION_ATTENTION_KEY, environmentId, storage) || '{}',
     ) as Record<string, unknown>;
     return Object.fromEntries(Object.entries(stored)
       .filter(([id, state]) => id && (state === 'running' || state === 'unread'))
@@ -202,12 +204,25 @@ function loadSessionAttention(environmentId = DEFAULT_ENVIRONMENT_ID): SessionAt
   }
 }
 
-function storeSessionAttention(environmentId: string, value: SessionAttentionState) {
-  storeEnvironmentValue(SESSION_ATTENTION_KEY, environmentId, JSON.stringify(value));
+function storeSessionAttention(environmentId: string, value: SessionAttentionState, storage?: Pick<Storage, "getItem" | "setItem">) {
+  storeEnvironmentValueFromStorage(SESSION_ATTENTION_KEY, environmentId, JSON.stringify(value), storage);
 }
 
 
-export default function App({ initialPairingInput = null }: { initialPairingInput?: string | null } = {}) {
+export default function App({ initialPairingInput = null, account }: { initialPairingInput?: string | null; account?: BrowserAccount } = {}) {
+  const accountStorage = useMemo(() => account && ({
+    getItem: (key: string) => localStorage.getItem('bridge.account.' + account.key + '.' + key)
+      ?? (account.migrateLegacy ? localStorage.getItem(key) : null),
+    setItem: (key: string, value: string) => localStorage.setItem('bridge.account.' + account.key + '.' + key, value),
+  }), [account]);
+  const loadSelectedEnvironmentId = () => loadSelectedEnvironmentIdFromStorage(accountStorage);
+  const loadKnownEnvironmentIds = () => loadKnownEnvironmentIdsFromStorage(accountStorage);
+  const storeKnownEnvironmentIds = (ids: unknown) => storeKnownEnvironmentIdsFromStorage(ids, accountStorage);
+  const storeSelectedEnvironmentId = (id: string) => storeSelectedEnvironmentIdFromStorage(id, accountStorage);
+  const loadEnvironmentValue = (key: string, id: string) => loadEnvironmentValueFromStorage(key, id, accountStorage);
+  const storeEnvironmentValue = (key: string, id: string, value: string) => storeEnvironmentValueFromStorage(key, id, value, accountStorage);
+  const [deviceChooser, setDeviceChooser] = useState(false);
+  const [copiedDownloadLink, setCopiedDownloadLink] = useState(false);
   const [pairingCredential, setPairingCredential] = useState<BrowserPairingCredential | null>(null);
   const [pairingInput, setPairingInput] = useState(initialPairingInput || '');
   const [pairingError, setPairingError] = useState('');
@@ -228,7 +243,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
   });
   const [authenticated, setAuthenticated] = useState(false);
   const [initialBootstrapPending, setInitialBootstrapPending] = useState(() => (
-    hasApprovedBrowserDevice() && initialPairingInput === null
+    (account || hasApprovedBrowserDevice()) && initialPairingInput === null
   ));
   const [sessionsInitialized, setSessionsInitialized] = useState(false);
   const [connecting, setConnecting] = useState(false);
@@ -236,7 +251,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
   const [statusText, setStatusText] = useState(t('未连接', 'Disconnected'));
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionAttention, setSessionAttention] = useState<SessionAttentionState>(() => (
-    loadSessionAttention(initialEnvironmentIdRef.current)
+    loadSessionAttention(initialEnvironmentIdRef.current, accountStorage)
   ));
   const [sessionSearch, setSessionSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -266,7 +281,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const [prompt, setPrompt] = useState('');
   const { attachment: pendingAttachment, setAttachment: setPendingAttachment, choose: prepareMessageAttachment, invalidate: invalidateMessageAttachment } = useAttachmentDraft();
-  const [knownAttachments, setKnownAttachments] = useState<Record<string, KnownAttachment>>(loadKnownAttachments);
+  const [knownAttachments, setKnownAttachments] = useState<Record<string, KnownAttachment>>(() => loadKnownAttachments(account));
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<ImageUploadState | null>(null);
   const [messageDelivery, setMessageDelivery] = useState<MessageDelivery | null>(null);
@@ -324,7 +339,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
 
   const socketRef = useRef<WebSocket | null>(null);
   const pairingCredentialRef = useRef(pairingCredential);
-  const approvedDeviceRef = useRef(hasApprovedBrowserDevice() && initialPairingInput === null);
+  const approvedDeviceRef = useRef((account || hasApprovedBrowserDevice()) && initialPairingInput === null);
   const authAttemptModeRef = useRef<'device' | 'pairing'>('device');
   const pairingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -402,7 +417,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     setSessionAttention((current) => {
       const next = update(current);
       sessionAttentionRef.current = next;
-      if (next !== current) storeSessionAttention(environmentIdRef.current, next);
+      if (next !== current) storeSessionAttention(environmentIdRef.current, next, accountStorage);
       return next;
     });
   }, []);
@@ -487,7 +502,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
       const limited = Object.fromEntries(Object.entries(next)
         .sort((left, right) => left[1].savedAt - right[1].savedAt)
         .slice(-40));
-      try { storeKnownAttachments(limited); } catch { /* keep in memory */ }
+      try { storeKnownAttachments(limited, account); } catch { /* keep in memory */ }
       return limited;
     });
   }, []);
@@ -639,7 +654,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     secureChannelRef.current?.clear();
     sessionStatusesRef.current = new SessionStatusOverlay();
     const channel = new BrowserSecureChannel({
-      identity: loadOrCreateBrowserDeviceIdentity(),
+      identity: account?.identity || loadOrCreateBrowserDeviceIdentity(),
       routeDeviceId,
       send: (frame, options) => {
         if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) return false;
@@ -698,7 +713,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     }
     if (message.type === 'auth.ok') {
       approvedDeviceRef.current = true;
-      markBrowserDeviceApproved();
+      if (!account) markBrowserDeviceApproved();
       pairingCredentialRef.current = null;
       setPairingCredential(null);
       if (pairingTimeoutRef.current) clearTimeout(pairingTimeoutRef.current);
@@ -1088,8 +1103,9 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
             authAttemptModeRef.current = 'device';
             const device = createBrowserDeviceProof({
               challenge, role: 'client', authProof: DEVICE_KEY_AUTH_CONTEXT,
-            });
-            sendWebSocketFrame(socket, { type: 'auth.device', role: 'client', device, protocol });
+            }, account?.identity);
+            sendWebSocketFrame(socket, { type: 'auth.device', role: 'client', device, protocol,
+              ...(account && { clientAccountVersion: 1, accountKey: account.key }) });
           } else {
             socket.close(4406, 'pairing required');
           }
@@ -1328,7 +1344,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     };
   }, [authenticated, online, refreshSessions]);
 
-  const loadHistory = useCallback(async (targetThreadId: string, cursor: string | null, requestVersion: number) => {
+  const loadHistory = useCallback(async (targetThreadId: string, cursor: string | null, requestVersion: number, firstPage?: HistoryPage) => {
     const executionAtRead = executionVersionRef.current;
     if (!cursor && window.__CODEX_ANYWHERE_CONFIG__?.owner) void request('session.subscribe', { threadId: targetThreadId, selectionEpoch: requestVersion }).catch(() => undefined);
     const requestChannel = secureChannelRef.current;
@@ -1346,7 +1362,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
         setNextCursor(earlyPage.nextCursor || null);
         publishedConversation = true;
         finishInitialBootstrap();
-      });
+      }, firstPage);
       if (selectedRequestRef.current !== requestVersion || threadIdRef.current !== targetThreadId
         || secureChannelRef.current !== requestChannel) {
         return;
@@ -1536,7 +1552,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     if (authenticated && online) preloadMessageBubble();
   }, [authenticated, online]);
 
-  const selectSession = useCallback((session: Session | null, { closeDrawer = true, switchingPc = false }: { closeDrawer?: boolean; switchingPc?: boolean } = {}) => {
+  const selectSession = useCallback((session: Session | null, { closeDrawer = true, switchingPc = false, firstPage }: { closeDrawer?: boolean; switchingPc?: boolean; firstPage?: HistoryPage } = {}) => {
     const nextThreadId = session?.id || null;
     if (nextThreadId) {
       updateSessionAttention((current) => markSessionAttentionRead(current, nextThreadId));
@@ -1587,7 +1603,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     if (closeDrawer) setDrawerOpen(false);
     if (nextThreadId) {
       preloadMessageBubble();
-      void loadHistory(nextThreadId, null, requestVersion);
+      void loadHistory(nextThreadId, null, requestVersion, firstPage);
     }
   }, [cancelFileDownload, invalidateMessageAttachment, loadHistory, prompt, resetExecutionPresentation, setPendingAttachment, updateSessionAttention]);
 
@@ -1617,7 +1633,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
       storeKnownEnvironmentIds(next);
       return next;
     });
-    const nextAttention = loadSessionAttention(nextEnvironmentId);
+    const nextAttention = loadSessionAttention(nextEnvironmentId, accountStorage);
     setSessionAttention(nextAttention);
     sessionAttentionRef.current = nextAttention;
     setSessions([]);
@@ -1644,6 +1660,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
 
   useEffect(() => {
     if (authenticated && hasEnvironmentInventory && environmentIds.length && !environmentIds.includes(environmentId)) {
+      if (account && environmentIds.length > 1) return;
       selectEnvironment(environmentIds.find(id => onlineEnvironmentIds.includes(id)) || environmentIds[0]);
     }
   }, [authenticated, hasEnvironmentInventory, environmentIds, environmentId, onlineEnvironmentIds, selectEnvironment]);
@@ -2327,6 +2344,47 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
     title: String(sessions.find((session) => session.id === threadId)?.title || '').slice(0, 160),
     online: authenticated && online }, authenticated);
 
+  const family = useThreadFamily(online && connectorStatus?.capabilities.threadFamily ? threadId : null, environmentId, request, executionActive);
+  const childIds = useMemo(() => new Set(family?.children.map(session => session.id.toLowerCase())), [family]);
+  const referenceSessions = useMemo(() => [...sessions, ...(family?.children || []), ...(family?.parent ? [family.parent] : [])], [sessions, family]);
+  const openReferencedThread = useCallback(async (id: string) => {
+    if (!connectorOnlineRef.current) throw Error('connector_offline');
+    const known = referenceSessions.find(session => session.id.toLowerCase() === id);
+    if (known) { selectSession(known); return; }
+    const selection = selectedRequestRef.current;
+    const page = await request<HistoryPage>('session.turns.list', { threadId: id, cursor: null, limit: HISTORY_PAGE_SIZE, mode: 'conversation' });
+    if (selection !== selectedRequestRef.current) return;
+    selectSession({ id, title: '' }, { firstPage: page });
+  }, [referenceSessions, request, selectSession]);
+
+  const pickDevice = (id: string) => {
+    setDeviceChooser(false);
+    if (id !== environmentId) selectEnvironment(id);
+  };
+  const deviceSheet = deviceChooser && <div className="owner-dialog-backdrop" onClick={() => setDeviceChooser(false)}>
+    <section className="owner-device-dialog owner-pc-sheet" role="dialog" aria-modal="true" aria-label="切换电脑" onClick={event => event.stopPropagation()}>
+      <header><div><h2>切换电脑</h2></div><button type="button" aria-label="关闭" onClick={() => setDeviceChooser(false)}>×</button></header>
+      {environmentIds.map(id => <button type="button" className="owner-pc-choice" key={id} onClick={() => pickDevice(id)} aria-current={id === environmentId ? 'true' : undefined}>
+        <span><strong>{environmentDisplayName(id, environmentLabels)}</strong><small>{onlineEnvironmentIds.includes(id) ? '在线' : '离线'}</small></span>
+        {id === environmentId && <span aria-label="当前电脑">✓</span>}
+      </button>)}
+    </section>
+  </div>;
+  if (account && authenticated && hasEnvironmentInventory && !environmentIds.includes(environmentId)) {
+    const empty = environmentIds.length === 0;
+    return <main className="login-shell"><section className="login-card owner-login-card">
+      <div className="owner-login-mark" aria-hidden="true"><BrandIcon /></div>
+      <h1>{empty ? '还没有连接电脑' : '选择一台电脑'}</h1>
+      <p>{empty ? '在电脑上安装 Connector，然后登录同一个 Fribench 账号。连接后，电脑会自动出现在这里。' : '你可以随时点顶部的电脑名称切换。'}</p>
+      {empty ? <><button type="button" className="owner-login-button" onClick={() => {
+        void navigator.clipboard.writeText(location.origin + '/download').then(() => setCopiedDownloadLink(true)).catch(() => location.assign('/download'));
+      }}>{copiedDownloadLink ? '已复制下载页链接' : '复制下载页链接'}</button>
+      <p><a className="owner-download-link" href="/download">查看安装说明</a></p></>
+      : <button type="button" className="owner-login-button" onClick={() => setDeviceChooser(true)}>选择电脑</button>}
+      <p><a href="/_fribench/auth/switch?return_to=%2F">切换 Fribench 账号</a></p>
+    </section>{deviceSheet}</main>;
+  }
+
   if (initialBootstrapPending && !pairingDialogOpen) return <StartupScreen status={statusText} />;
 
   if (!authenticated) {
@@ -2543,6 +2601,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
         onOpenDesktop={canOpenSessionOnDesktop ? openPermissionSettingsOnDesktop : undefined}
       />
 
+      {deviceSheet}
       <section className="conversation">
         <div className="conversation-top">
         <header className="topbar">
@@ -2564,7 +2623,9 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
                   <SidebarIcon name="edit" />
                 </button>
               )}
-              <span>{environmentShortName(environmentId, environmentLabels)}</span>
+              {account ? <button type="button" className="owner-pc-trigger" onClick={() => setDeviceChooser(true)} aria-label="切换电脑">
+                {environmentShortName(environmentId, environmentLabels)}{!online && ' · 离线'}
+              </button> : <span>{environmentShortName(environmentId, environmentLabels)}</span>}
               {threadId && connectorStatus?.capabilities.sessionArchive && (
                 <button type="button" className="session-rename-button" disabled={!online || (executionActive && !(approval?.actionable === false && connectorStatus.capabilities.sessionArchivePendingApproval))}
                   aria-label={t('归档会话', 'Archive session')} title={t('归档会话', 'Archive session')}
@@ -2621,14 +2682,12 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
           />
         </header>
 
-        {threadId && online && connectorStatus?.capabilities.threadFamily && <ThreadFamily
-          key={environmentId + ':' + threadId} id={threadId} request={request} running={executionActive}
-          onSelect={session => selectSession(session)} />}
+        <ThreadFamily family={family} onSelect={session => selectSession(session)} />
         </div>
         {editTarget && editTarget.environment === environmentId && editTarget.threadId === threadId
           && editTarget.selection === selectedRequestRef.current && <MessageEditDialog
           originalText={editTarget.item.text} onPrepare={prepareMessageEdit} onSubmit={submitMessageEdit} onClose={closeMessageEditor} />}
-        <ConversationTimeline
+        <ThreadReferenceContext.Provider value={{ childIds, sessions: referenceSessions, open: openReferencedThread }}><ConversationTimeline
           onEditMessage={connectorStatus?.mode === 'desktop' && connectorStatus.capabilities.desktopNativeState === false ? undefined : openMessageEditor}
           editDisabled={!online || executionActive || uploading || editingMessage}
           messageListRef={messageListRef}
@@ -2659,7 +2718,7 @@ export default function App({ initialPairingInput = null }: { initialPairingInpu
           onReadTurnDiff={readTurnDiff}
           onReadVisualization={readVisualization}
           onReadPreviewImage={readPreviewImage}
-        />
+        /></ThreadReferenceContext.Provider>
         <div className="execution-strip">
           {(deliveryReceipt || (!compactionStartedAt && executionActive)) && (
             <LiveActivityStatus

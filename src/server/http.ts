@@ -74,7 +74,7 @@ function serveRuntimeConfig(
   headOnly = false,
 ) {
   const body = `window.__CODEX_ANYWHERE_CONFIG__ = ${JSON.stringify({
-    locale, owner: process.env.ACCESS_MODE === 'owner',
+    locale, owner: ['owner', 'account'].includes(process.env.ACCESS_MODE || ''),
   })};\n`;
   response.writeHead(200, {
     'content-type': 'text/javascript; charset=utf-8',
@@ -94,7 +94,7 @@ function setSecurityHeaders(response: ServerResponse, request: IncomingMessage, 
   response.setHeader('strict-transport-security', 'max-age=31536000; includeSubDomains');
   response.setHeader('permissions-policy', 'camera=(self), microphone=(), geolocation=()');
   const webSocketSource = currentWebSocketSource(request, trustProxy);
-  response.setHeader('content-security-policy', `default-src 'self'; connect-src 'self'${process.env.ACCESS_MODE === 'owner' ? ' https://auth.fribench.cn' : ''}${webSocketSource ? ` ${webSocketSource}` : ''}; style-src 'self'; script-src 'self'; img-src 'self' data: blob:; frame-src 'self' blob:; object-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors ${embeddingOrigin || "'none'"}`);
+  response.setHeader('content-security-policy', `default-src 'self'; connect-src 'self'${['owner', 'account'].includes(process.env.ACCESS_MODE || '') ? ' https://auth.fribench.cn' : ''}${webSocketSource ? ` ${webSocketSource}` : ''}; style-src 'self'; script-src 'self'; img-src 'self' data: blob:; frame-src 'self' blob:; object-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors ${embeddingOrigin || "'none'"}`);
 }
 
 export function currentWebSocketSource(request: IncomingMessage | undefined, trustProxy: boolean) {

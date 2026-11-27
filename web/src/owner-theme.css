@@ -699,3 +699,32 @@ html[data-theme] .brand-mark { background: var(--ui-text); color: var(--ui-bg); 
 .thread-family summary { cursor:pointer; }
 .follow-up-draft { display:block; width:100%; padding:.5rem .8rem; text-align:left; background:transparent; border:0; cursor:pointer; }
 .follow-up-draft span { color:var(--ui-link, #537fc4); margin-right:.6rem; }
+
+.owner-app-content:not([hidden]) { display: contents; }
+.owner-account-check { align-items: center; justify-content: center; }
+.owner-pc-trigger { min-height: 44px; cursor: pointer; color: inherit; padding: 0 .55rem; }
+.owner-pc-sheet { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.owner-pc-choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  width: 100%;
+  padding: .45rem .65rem;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  border-color: color-mix(in srgb, currentColor 14%, transparent);
+  text-align: left;
+  color: inherit;
+}
+.owner-pc-choice small { display: block; opacity: .72; }
+@media (max-width: 720px) {
+  .owner-dialog-backdrop:has(.owner-pc-sheet) { align-items: end; padding-bottom: 0; }
+  .owner-device-dialog.owner-pc-sheet { border-radius: 18px 18px 0 0; }
+}
+
+.thread-references { margin-top: .35rem; color: inherit; font-size: .9em; }
+.thread-references button, .thread-references summary { min-height: 44px; cursor: pointer; text-align: left; color: inherit; }
+.thread-references button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-references small { display: block; opacity: .76; }

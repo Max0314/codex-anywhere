@@ -3,23 +3,29 @@ import type { BridgeRequest } from './bridge-request-manager';
 import type { Session } from './app-types';
 import { t } from './i18n';
 
-export function ThreadFamily({ id, request, onSelect, running }: {
-  id: string; request: BridgeRequest; onSelect: (session: Session) => void; running: boolean;
-}) {
-  const [family, setFamily] = useState<{ parent: Session | null; children: Session[] } | null>(null);
+type Family = { parent: Session | null; children: Session[] };
+
+export function useThreadFamily(id: string | null, environment: string, request: BridgeRequest, running: boolean) {
+  const key = environment + ':' + id;
+  const [result, setResult] = useState<{ key: string; family: Family | null }>();
   useEffect(() => {
+    if (!id) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const refresh = async () => {
       try {
-        const next = await request<typeof family>('session.family', { threadId: id }, { signal: controller.signal });
-        if (!controller.signal.aborted) setFamily(next);
+        const next = await request<Family | null>('session.family', { threadId: id }, { signal: controller.signal });
+        if (!controller.signal.aborted) setResult({ key, family: next });
       } catch { /* History remains usable when Desktop has no family metadata. */ }
       if (running && !controller.signal.aborted) timer = setTimeout(() => void refresh(), 12000);
     };
     void refresh();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [id, request, running]);
+  }, [id, key, request, running]);
+  return result?.key === key ? result.family : null;
+}
+
+export function ThreadFamily({ family, onSelect }: { family: Family | null; onSelect: (session: Session) => void }) {
   if (!family || (!family.parent && !family.children.length)) return null;
   return <nav className="thread-family" aria-label={t('关联会话', 'Related sessions')}>
     {family.parent && <button type="button" onClick={() => onSelect(family.parent!)}>← {t('主会话', 'Parent')} · {family.parent.title}</button>}

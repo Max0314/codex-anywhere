@@ -2,13 +2,8 @@ import { createHash, createHmac, randomBytes } from "node:crypto";
 import {
   existsSync,
   readFileSync,
-  mkdirSync,
-  openSync,
-  writeFileSync,
-  fsyncSync,
-  closeSync,
-  renameSync,
 } from "node:fs";
+import { isIP } from "node:net";
 import { dirname, resolve } from "node:path";
 import {
   request as httpRequest,
@@ -22,30 +17,16 @@ import {
 } from "../shared/device-auth.js";
 import { DEVICE_KEY_AUTH_CONTEXT } from "../shared/pairing-auth.js";
 import { DeviceRegistry } from "./device-registry.js";
+import { accountSubjectPattern, writeAccountState, type AccountDevice as Device, type AccountState as State } from "./account-state.js";
 
 export function ownerAuthorizationCloseCode(error: unknown) {
   const value = error as { status?: number; message?: string };
   if (value.status === 401) return 4401;
+  if (value.message === 'refresh_browser') return 4406;
   if (value.message === 'device_proof_invalid' || value.message === 'browser_identity_changed') return 4407;
   return value.status === 403 || value.status === 409 ? 4403 : 1013;
 }
 
-type Device = {
-  role: "client" | "connector";
-  id: string;
-  publicKey: string;
-  label: string;
-  routeId?: string;
-  revision: number;
-  revoked: boolean;
-  securityVersion?: string;
-};
-type State = {
-  version: 1;
-  ownerSub: string;
-  devices: Device[];
-  sessions: Record<string, { keyId?: string; revoked: boolean }>;
-};
 type Intent = {
   id: string;
   nonce: string;
@@ -62,6 +43,8 @@ type Intent = {
   approving?: boolean;
   approvalResult?: { redirect: string };
   approvalSession?: string;
+  approvalSub?: string;
+  finishFingerprint?: string;
   pending?: Promise<unknown>;
 };
 export type OwnerLease = {
@@ -80,6 +63,8 @@ function fail(status: number, message: string): never {
 }
 
 export class OwnerAccess {
+  readonly multiAccount = process.env.ACCESS_MODE === "account";
+  readonly admission = process.env.ACCOUNT_ADMISSION || "owner";
   readonly origin = process.env.PUBLIC_ORIGIN || "";
   readonly owner = process.env.OWNER_SUB || "";
   readonly base = process.env.IDENTITY_BASE_URL || "";
@@ -93,48 +78,68 @@ export class OwnerAccess {
   private checks = new Map<string, Promise<any>>();
   private downloadGrants = new Map<
     string,
-    { keyId: string; revision: number; path: string; expires: number }
+    { sub: string; keyId: string; revision: number; path: string; expires: number }
   >();
-  onRevoke: (role: string, id: string) => void = () => {};
+  onRevoke: (role: string, id: string, sub: string) => void = () => {};
   constructor(private registry: DeviceRegistry) {
     if (
       !/^https:\/\/[^/]+$/.test(this.origin) ||
-      !/^[a-f0-9-]{36}$/i.test(this.owner) ||
+      !accountSubjectPattern.test(this.owner) ||
+      (this.multiAccount && !["owner", "all"].includes(this.admission)) ||
       !this.base ||
       this.secret.length < 32 ||
       this.bindingKey.length < 32
     )
       throw Error("owner_configuration_invalid");
-    this.file = resolve(
-      dirname(registry.filePath || "/data/devices.json"),
-      "owner-devices.v1.json",
-    );
-    this.state = existsSync(this.file)
-      ? JSON.parse(readFileSync(this.file, "utf8"))
-      : { version: 1, ownerSub: this.owner, devices: [], sessions: {} };
-    if (this.state.ownerSub !== this.owner)
-      throw Error("owner_registry_identity_changed");
-    if (
-      this.state.version !== 1 ||
-      !Array.isArray(this.state.devices) ||
-      !this.state.sessions ||
-      new Set(this.state.devices.map((d) => d.role + ":" + d.id)).size !==
-        this.state.devices.length
-    )
+    const directory = dirname(registry.filePath || "/data/devices.json");
+    this.file = resolve(directory, this.multiAccount ? "accounts.v2.json" : "owner-devices.v1.json");
+    const stored = existsSync(this.file) ? JSON.parse(readFileSync(this.file, "utf8")) : null;
+    if (this.multiAccount && !stored && existsSync(resolve(directory, "owner-devices.v1.json")))
+      throw Error("account_migration_required");
+    this.state = stored || { version: this.multiAccount ? 2 : 1, ownerSub: this.owner, devices: [], sessions: {} };
+    if (this.state.ownerSub !== this.owner) throw Error("owner_registry_identity_changed");
+    if (this.state.version !== (this.multiAccount ? 2 : 1) || !Array.isArray(this.state.devices) || !this.state.sessions)
       throw Error("owner_registry_invalid");
+    if (!this.multiAccount) {
+      this.state.devices = this.state.devices.map(device => ({ ...device, sub: this.owner }));
+      this.state.sessions = Object.fromEntries(Object.entries(this.state.sessions).map(([key, session]) => [key, { ...session, sub: this.owner }]));
+    }
+    const keys = new Set<string>();
+    const routes = new Set<string>();
+    for (const device of this.state.devices) {
+      const key = device.role + ":" + device.id;
+      const route = device.sub + ":" + device.routeId;
+      if (!accountSubjectPattern.test(device.sub) || keys.has(key)
+        || device.role === "connector" && (!device.routeId || routes.has(route)))
+        throw Error("account_device_conflict");
+      keys.add(key);
+      if (device.role === "connector") routes.add(route);
+    }
+    if (Object.values(this.state.sessions).some(session => !accountSubjectPattern.test(session.sub)))
+      throw Error("account_session_invalid");
   }
   private persist(next: State) {
-    mkdirSync(dirname(this.file), { recursive: true });
-    const temp = this.file + ".tmp";
-    const fd = openSync(temp, "w", 0o600);
-    try {
-      writeFileSync(fd, JSON.stringify(next));
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(temp, this.file);
+    writeAccountState(this.file, next);
     this.state = next;
+  }
+  private admits(sub: string) {
+    return accountSubjectPattern.test(sub) && (sub === this.owner || this.multiAccount && this.admission === "all");
+  }
+  private accountKey(sub: string) {
+    return createHmac("sha256", this.bindingKey).update("account:" + sub).digest("base64url");
+  }
+  activeDevices(sub?: string) {
+    return this.state.devices.filter(device => !device.revoked && this.admits(device.sub) && (!sub || device.sub === sub));
+  }
+  renameConnector(sub: string, routeId: string, label: unknown) {
+    const name = typeof label === "string" ? label.trim() : "";
+    if (!name || name.length > 80 || /[\u0000-\u001f\u007f-\u009f]/.test(name)) fail(400, "device_label_invalid");
+    const next = structuredClone(this.state);
+    const device = next.devices.find(item => item.sub === sub && item.role === "connector" && item.routeId === routeId && !item.revoked);
+    if (!device) fail(404, "connector_offline");
+    device.label = name;
+    this.persist(next);
+    return { id: routeId, label: name };
   }
   private session(request: IncomingMessage) {
     const entries = String(request.headers.cookie || "")
@@ -227,9 +232,11 @@ export class OwnerAccess {
         this.checks.delete(session.key);
     }
     if (!value.authenticated) fail(401, "login_required");
-    if (value.sub !== this.owner) fail(403, "owner_required");
-    if (this.state.sessions[session.key]?.revoked) fail(403, "device_revoked");
-    return session;
+    if (!this.admits(value.sub)) fail(403, "owner_required");
+    const binding = this.state.sessions[session.key];
+    if (binding?.revoked) fail(403, "device_revoked");
+    if (binding && binding.sub !== value.sub) fail(403, "browser_identity_changed");
+    return { ...session, sub: String(value.sub), displayName: String(value.name || ""), loginName: String(value.preferred_username || "") };
   }
   async authorize(
     request: IncomingMessage,
@@ -254,6 +261,7 @@ export class OwnerAccess {
         fail(403, "upgrade_connector");
       return {
         device: {
+          sub: this.owner,
           role: "connector",
           id: proof.id,
           publicKey: proof.publicKey,
@@ -277,6 +285,7 @@ export class OwnerAccess {
       frame.protocol?.version !== 5
     )
       fail(403, "owner_auth_required");
+    if (browser && this.multiAccount && frame.clientAccountVersion !== 1) fail(409, "refresh_browser");
     const proof = frame.device as DeviceAuthProof;
     if (
       !proof ||
@@ -297,16 +306,18 @@ export class OwnerAccess {
       if (request.headers.origin !== this.origin) fail(403, "origin_invalid");
       const session = await this.guard(request);
       sessionHash = session.key;
+      if (this.multiAccount && frame.accountKey !== this.accountKey(session.sub)) fail(401, "account_changed");
       record = this.state.devices.find(
         (d) => d.id === proof.id && d.role === "client",
       );
-      if (record?.revoked) fail(403, "device_revoked");
+      if (record?.revoked || record && record.sub !== session.sub) fail(403, "device_revoked");
       const previous = this.state.sessions[sessionHash];
       if (previous?.keyId && previous.keyId !== proof.id)
         fail(403, "browser_identity_changed");
       const next = structuredClone(this.state);
       if (!record) {
         record = {
+          sub: session.sub,
           role: "client",
           id: proof.id,
           publicKey: proof.publicKey,
@@ -316,13 +327,16 @@ export class OwnerAccess {
         };
         next.devices.push(record);
       }
-      next.sessions[sessionHash] = { keyId: proof.id, revoked: false };
-      this.persist(next);
+      if (record.publicKey !== proof.publicKey) fail(403, "device_identity_conflict");
+      if (!previous || !previous.keyId) {
+        next.sessions[sessionHash] = { sub: session.sub, keyId: proof.id, revoked: false };
+        this.persist(next);
+      }
     } else {
-      if (!record || record.routeId !== frame.deviceId)
+      if (!record || !this.admits(record.sub) || record.routeId !== frame.deviceId)
         fail(403, "connector_binding_required");
       const current = await this.internal("/internal/desktop/account-state", {
-        sub: this.owner,
+        sub: record.sub,
       });
       if (
         !current.active ||
@@ -336,6 +350,7 @@ export class OwnerAccess {
     if (
       !current ||
       current.revoked ||
+      current.sub !== record?.sub ||
       current.revision !== record?.revision ||
       current.routeId !== record?.routeId
     )
@@ -343,7 +358,7 @@ export class OwnerAccess {
     record = current;
     if (!record || record.publicKey !== proof.publicKey || record.revoked)
       fail(403, "device_identity_conflict");
-    if (!this.registry.isApproved(record.role, proof)) {
+    if (!this.multiAccount && !this.registry.isApproved(record.role, proof)) {
       const pending = this.registry.requestPairing({
         role: record.role,
         device: proof,
@@ -373,7 +388,7 @@ export class OwnerAccess {
     );
     return (
       Boolean(
-        current && !current.revoked && current.revision === lease.revision,
+        current && !current.revoked && current.sub === lease.device.sub && this.admits(current.sub) && current.revision === lease.revision,
       ) &&
       !lease.device.revoked &&
       lease.device.revision === lease.revision &&
@@ -389,10 +404,12 @@ export class OwnerAccess {
     }
     if (lease.device.revoked || lease.device.revision !== lease.revision)
       fail(403, "device_revoked");
-    if (lease.sessionHash) await this.guard(lease.request);
-    else {
+    if (lease.sessionHash) {
+      const session = await this.guard(lease.request);
+      if (session.sub !== lease.device.sub) fail(401, "account_changed");
+    } else {
       const state = await this.internal("/internal/desktop/account-state", {
-        sub: this.owner,
+        sub: lease.device.sub,
       });
       if (
         !state.active ||
@@ -400,6 +417,7 @@ export class OwnerAccess {
       )
         fail(403, "connector_authorization_expired");
     }
+    if (!this.valid(lease)) fail(403, "authorization_changed");
     lease.expires = Date.now() + (lease.sessionHash ? 5000 : 30000);
   }
   releaseGrant(lease: OwnerLease) {
@@ -413,6 +431,7 @@ export class OwnerAccess {
     for (const [key, value] of this.downloadGrants)
       if (value.expires < Date.now()) this.downloadGrants.delete(key);
     this.downloadGrants.set(token, {
+      sub: lease.device.sub,
       keyId: lease.device.id,
       revision: lease.revision,
       path: release.path,
@@ -475,7 +494,10 @@ export class OwnerAccess {
         return true;
       }
       if (path === "/api/pc/intents" && request.method === "POST") {
-        const address = request.socket.remoteAddress || "";
+        const forwarded = String(request.headers["x-real-ip"] || "");
+        const address = process.env.BRIDGE_TRUST_PROXY === "1" && isIP(forwarded)
+          ? forwarded : request.socket.remoteAddress || "";
+        for (const [ip, limit] of this.counts) if (Date.now() - limit.start > 60000) this.counts.delete(ip);
         const bucket = this.counts.get(address) || {
           start: Date.now(),
           count: 0,
@@ -545,7 +567,7 @@ export class OwnerAccess {
         });
         return true;
       }
-      if (path.startsWith("/api/pc/intents/") && path.endsWith("/finish")) {
+      if (request.method === "POST" && /^\/api\/pc\/intents\/[a-zA-Z0-9_-]+\/finish$/.test(path)) {
         const intent = this.intents.get(path.split("/")[4]);
         if (!intent || intent.expiry < Date.now() || !intent.approved)
           fail(400, "intent_expired");
@@ -566,6 +588,9 @@ export class OwnerAccess {
           hashBase64(body.verifier) !== intent.challenge
         )
           fail(403, "device_proof_invalid");
+        const fingerprint = hash(String(body.code));
+        if (intent.finishFingerprint && intent.finishFingerprint !== fingerprint) fail(409, "authorization_changed");
+        intent.finishFingerprint = fingerprint;
         if (!intent.pending) intent.pending = this.finish(intent, body);
         const value = await intent.pending;
         const record = this.state.devices.find(
@@ -574,13 +599,14 @@ export class OwnerAccess {
         if (
           !record ||
           record.revoked ||
+          record.sub !== intent.approvalSub ||
           record.revision !== intent.revision + 1
         )
           fail(409, "authorization_changed");
         json(200, value);
         return true;
       }
-      let session: { cookie: string; key: string };
+      let session: Awaited<ReturnType<OwnerAccess["guard"]>>;
       const token = String(request.headers.authorization || "").replace(
         /^Bearer /,
         "",
@@ -593,13 +619,14 @@ export class OwnerAccess {
         if (
           !device ||
           device.revoked ||
+          device.sub !== grant.sub || !this.admits(grant.sub) ||
           device.revision !== grant.revision ||
           grant.path !== path ||
           grant.expires < Date.now()
         )
           fail(403, "download_authorization_expired");
         const state = await this.internal("/internal/desktop/account-state", {
-          sub: this.owner,
+          sub: grant.sub,
         });
         if (!state.active || state.security_version !== device.securityVersion)
           fail(403, "download_authorization_expired");
@@ -609,23 +636,29 @@ export class OwnerAccess {
         if (
           !current ||
           current.revoked ||
+          current.sub !== grant.sub ||
           current.revision !== grant.revision ||
           grant.expires < Date.now()
         )
           fail(403, "download_authorization_expired");
-        session = { cookie: "", key: "" };
+        session = { cookie: "", key: "", sub: grant.sub, displayName: "", loginName: "" };
       } else session = await this.guard(request);
       if (request.method === "POST") {
         this.originGuard(request);
       }
-      if (path === "/api/access") {
-        json(200, { owner: true, csrf: this.csrf(session.key) });
+      if (path === "/api/access" && request.method === "GET") {
+        json(200, { owner: true, csrf: this.csrf(session.key), ...(this.multiAccount && {
+          authenticated: true, accountKey: this.accountKey(session.sub), displayName: session.displayName,
+          loginName: session.loginName, migrateLegacyBrowser: session.sub === this.owner,
+        }) });
         return true;
       }
-      if (path === "/api/devices") {
+      if (this.multiAccount && /^\/api\/devices(?:\/|$)/.test(path)
+        && request.headers["x-codex-account"] !== this.accountKey(session.sub)) fail(409, "account_changed");
+      if (path === "/api/devices" && request.method === "GET") {
         json(
           200,
-          this.state.devices.map(({ role, id, label, routeId, revoked }) => ({
+          this.state.devices.filter(device => device.sub === session.sub).map(({ role, id, label, routeId, revoked }) => ({
             role,
             id,
             label,
@@ -638,6 +671,10 @@ export class OwnerAccess {
       if (path === "/desktop-connect") {
         const intent = this.intents.get(url.searchParams.get("intent") || "");
         if (!intent || intent.expiry < Date.now()) fail(400, "intent_expired");
+        const returnTo = "/desktop-connect?intent=" + intent.id;
+        const switchAccount = this.multiAccount ? '<p><a href="/_fribench/auth/switch?return_to=' + encodeURIComponent(returnTo) + '">切换账号</a></p>' : "";
+        const account = this.multiAccount ? '<p>Fribench 账号 <strong>' + escapeHtml(session.displayName || session.loginName) + '</strong>' +
+          (session.loginName && session.loginName !== session.displayName ? " · " + escapeHtml(session.loginName) : "") + "</p>" : "";
         response.writeHead(200, {
           "content-type": "text/html; charset=utf-8",
           "cache-control": "no-store",
@@ -647,21 +684,24 @@ export class OwnerAccess {
         response.end(
           page(
             "连接电脑",
-            `<h1>连接 ${escapeHtml(intent.label)}</h1><p>设备指纹 ${intent.idKey.slice(-12)}</p><p>确认允许此电脑接入你的 Codex。</p><button id="approve" data-intent="${intent.id}">确认连接这台电脑</button><p id="status"></p><script src="/owner-connect.js"></script>`,
+            `<h1>连接 ${escapeHtml(intent.label)}</h1><p>设备指纹 ${intent.idKey.slice(-12)}</p>${account}<p>确认允许此电脑接入你的 Codex。</p><button id="approve" data-intent="${intent.id}" data-account="${this.multiAccount ? this.accountKey(session.sub) : ""}">确认连接这台电脑</button>${switchAccount}<p id="status" role="status"></p><script src="/owner-connect.js"></script>`,
           ),
         );
         return true;
       }
       if (request.method === "POST") {
         const body = await this.jsonBody(request);
-        await this.guard(request);
+        if ((await this.guard(request)).sub !== session.sub) fail(401, "account_changed");
         if (body.csrf !== this.csrf(session.key)) fail(403, "csrf_invalid");
         if (this.state.sessions[session.key]?.revoked)
           fail(403, "device_revoked");
-        if (path.startsWith("/api/pc/intents/") && path.endsWith("/approve")) {
+        if (/^\/api\/pc\/intents\/[a-zA-Z0-9_-]+\/approve$/.test(path)) {
           const intent = this.intents.get(path.split("/")[4]);
           if (!intent || intent.expiry < Date.now())
             fail(400, "intent_expired");
+          if (this.multiAccount && body.accountKey !== this.accountKey(session.sub)) fail(409, "account_changed");
+          const previousBinding = this.state.devices.find(device => device.role === "connector" && device.id === intent.idKey);
+          if (previousBinding && previousBinding.sub !== session.sub) fail(409, "device_account_conflict");
           if (intent.approved && intent.approvalSession === session.key && intent.approvalResult) {
             json(200, intent.approvalResult);
             return true;
@@ -689,6 +729,7 @@ export class OwnerAccess {
               fail(403, "device_revoked");
             }
             intent.approvalSession = session.key;
+            intent.approvalSub = session.sub;
             intent.approved = true;
             intent.approvalResult = { redirect: result.redirect };
             json(200, result);
@@ -697,12 +738,13 @@ export class OwnerAccess {
           }
           return true;
         }
-        if (path.startsWith("/api/devices/") && path.endsWith("/revoke")) {
+        if (/^\/api\/devices\/(client|connector)\/[^/]+\/revoke$/.test(path)) {
           const parts = path.split("/");
           const device = this.state.devices.find(
-            (d) => d.role === parts[3] && d.id === parts[4],
+            (d) => d.sub === session.sub && d.role === parts[3] && d.id === parts[4],
           );
           if (!device) fail(404, "device_missing");
+          if (this.multiAccount && device.revoked) { json(200, { revoked: true }); return true; }
           const next = structuredClone(this.state);
           const target = next.devices.find(
             (d) => d.role === device.role && d.id === device.id,
@@ -710,10 +752,10 @@ export class OwnerAccess {
           target.revoked = true;
           target.revision++;
           for (const binding of Object.values(next.sessions))
-            if (binding.keyId === device.id) binding.revoked = true;
+            if (binding.sub === device.sub && binding.keyId === device.id) binding.revoked = true;
           this.persist(next);
-          this.registry.remove(device.role, device.id);
-          this.onRevoke(device.role, device.id);
+          if (!this.multiAccount) this.registry.remove(device.role, device.id);
+          this.onRevoke(device.role, device.id, device.sub);
           json(200, { revoked: true });
           return true;
         }
@@ -758,7 +800,7 @@ export class OwnerAccess {
       } else if (path === "/desktop-connect") {
         response.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
         response.end(page("连接电脑", status === 403
-          ? '<h1>请使用设备主人的 Fribench 账号</h1><p>请切换至已授权的账号，再从电脑客户端登录。</p>'
+          ? '<h1>请使用已获准访问的 Fribench 账号</h1><p>请切换至已授权的账号，再从电脑客户端登录。</p>'
           : '<h1>连接暂未完成</h1><p>请回到电脑客户端，重新点击「登录 Fribench」。</p>'));
       } else
         json(status, {
@@ -774,7 +816,7 @@ export class OwnerAccess {
       code_verifier: body.verifier,
       redirect_uri: intent.redirectUri,
     });
-    if (grant.sub !== this.owner) fail(403, "owner_required");
+    if (grant.sub !== intent.approvalSub || !this.admits(grant.sub)) fail(403, "owner_required");
     const old = this.state.devices.find(
       (d) => d.role === "connector" && d.id === intent.idKey,
     );
@@ -783,6 +825,7 @@ export class OwnerAccess {
       this.state.sessions[intent.approvalSession]?.revoked
     )
       fail(403, "device_revoked");
+    if (old && old.sub !== grant.sub) fail(409, "device_account_conflict");
     if (old && old.routeId !== intent.routeId)
       fail(409, "device_route_conflict");
     if ((old?.revision || 0) !== intent.revision)
@@ -790,14 +833,14 @@ export class OwnerAccess {
     if (
       this.state.devices.some(
         (d) =>
-          d.role === "connector" &&
+          d.role === "connector" && d.sub === grant.sub &&
           d.routeId === intent.routeId &&
           d.id !== intent.idKey,
       )
     )
       fail(409, "device_route_conflict");
     if (
-      this.registry
+      !this.multiAccount && this.registry
         .listApproved()
         .some(
           (d) =>
@@ -808,7 +851,7 @@ export class OwnerAccess {
     )
       fail(409, "device_route_conflict");
     if (
-      this.registry
+      !this.multiAccount && this.registry
         .listApproved()
         .some(
           (d) =>
@@ -820,6 +863,7 @@ export class OwnerAccess {
     )
       fail(409, "device_route_conflict");
     const record: Device = {
+      sub: grant.sub,
       role: "connector",
       id: intent.idKey,
       publicKey: intent.publicKey,
@@ -843,10 +887,10 @@ export class OwnerAccess {
     path: string,
   ) {
     const allowed =
-      /^\/_fribench\/auth\/(config|session|login|callback|logout|manage|bootstrap|complete)$/.test(
+      /^\/_fribench\/auth\/(config|session|login|register|switch|callback|logout|manage|bootstrap|complete)$/.test(
         path,
       ) || /^\/_fribench\/(client|account-view|viewport)\.(js|css)$/.test(path);
-    if (!allowed) {
+    if (!allowed || path === "/_fribench/auth/switch" && !this.multiAccount) {
       response.writeHead(404);
       response.end();
       return;

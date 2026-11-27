@@ -20,6 +20,44 @@ function validStoredIdentity(value: unknown): value is DeviceIdentity {
   }
 }
 
+export type BrowserAccount = { key: string; migrateLegacy: boolean; identity: DeviceIdentity };
+
+const accountIdentities = new Map<string, Promise<DeviceIdentity>>();
+
+export function prepareAccountIdentity(key: string, migrateLegacy: boolean): Promise<DeviceIdentity> {
+  const pending = accountIdentities.get(key);
+  if (pending) return pending;
+  const open = new Promise<DeviceIdentity>((resolve, reject) => {
+    const request = indexedDB.open('codex-anywhere-account-keys', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('identity');
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      const transaction = db.transaction('identity', 'readwrite');
+      const bucket = transaction.objectStore('identity');
+      const read = bucket.get(key);
+      let identity: DeviceIdentity;
+      read.onsuccess = () => {
+        if (validStoredIdentity(read.result)) {
+          identity = read.result;
+          return;
+        }
+        let legacy: unknown;
+        if (migrateLegacy) {
+          try { legacy = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch { /* no reusable identity */ }
+        }
+        identity = validStoredIdentity(legacy) ? legacy : createDeviceIdentity();
+        bucket.put(identity, key);
+      };
+      transaction.oncomplete = () => { db.close(); resolve(identity); };
+      transaction.onabort = () => { db.close(); reject(transaction.error); };
+    };
+  });
+  const identity = open.catch(error => { accountIdentities.delete(key); throw error; });
+  accountIdentities.set(key, identity);
+  return identity;
+}
+
 export function loadOrCreateBrowserDeviceIdentity() {
   if (memoryIdentity) return memoryIdentity;
   try {
@@ -47,8 +85,7 @@ export function createBrowserDeviceProof(params: {
   role: AuthRole;
   authProof: string;
   routeDeviceId?: string;
-}) {
-  const identity = loadOrCreateBrowserDeviceIdentity();
+}, identity = loadOrCreateBrowserDeviceIdentity()) {
   return createDeviceAuthProof(identity, params, browserDeviceLabel());
 }
 
